@@ -48,7 +48,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      # First-time boot downloads ~300MB of safetensors when the upstream
+      # repo has no ONNX files (Candle backend fallback). Give it plenty
+      # of headroom — subsequent boots are near-instant.
+      start_period: 600s
     networks:
       - private
       - public  # needed for initial model download from HuggingFace

@@ -141,12 +141,16 @@ step_docker_up() {
 
 # --- step 4: wait for healthchecks -------------------------------------------
 step_wait_healthy() {
-  say "Step 4/10: wait for db + embeddings healthchecks (120s)"
+  # 600s timeout because first boot downloads ~300MB safetensors when
+  # the upstream HF repo has no ONNX files (Candle backend fallback).
+  # Subsequent boots reuse the embeddings_cache volume and are quick.
+  local timeout_s="${SILL_INSTALL_WAIT_HEALTHY_S:-600}"
+  say "Step 4/10: wait for db + embeddings healthchecks (${timeout_s}s)"
   if (( DRY_RUN )); then
     note "DRY: would poll 'docker compose ps' for 'healthy' on db and embeddings"
     return 0
   fi
-  local deadline=$(( SECONDS + 120 ))
+  local deadline=$(( SECONDS + timeout_s ))
   local services="db embeddings"
   while (( SECONDS < deadline )); do
     local all_healthy=1
@@ -176,7 +180,7 @@ for line in raw.splitlines():
     fi
     sleep 5
   done
-  echo "install.sh: db/embeddings not healthy after 120s. Check 'docker compose -f $COMPOSE_FILE logs'." >&2
+  echo "install.sh: db/embeddings not healthy after ${timeout_s}s. Check 'docker compose -f $COMPOSE_FILE logs'." >&2
   exit 1
 }
 
@@ -187,7 +191,16 @@ step_import_seed() {
     note "--no-seed: skipping"
     return 0
   fi
-  run "sill seed import \"$SILL_DIR/seed/methodology.jsonl\""
+  # Source backend/.env so any POSTGRES_PORT / POSTGRES_USER overrides
+  # reach `sill seed import`. The CLI does not auto-load .env (yet),
+  # so the install script does it for the one-shot import.
+  if [[ -f "$SILL_DIR/backend/.env" ]]; then
+    note "sourcing $SILL_DIR/backend/.env for db creds"
+    # shellcheck disable=SC1091
+    run "set -a && . \"$SILL_DIR/backend/.env\" && set +a && sill seed import \"$SILL_DIR/seed/methodology.jsonl\""
+  else
+    run "sill seed import \"$SILL_DIR/seed/methodology.jsonl\""
+  fi
 }
 
 # --- step 6: plugin symlink ---------------------------------------------------

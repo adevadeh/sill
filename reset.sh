@@ -49,8 +49,9 @@ say "2/4: docker compose up -d db embeddings rabbitmq maintenance_worker"
 (cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" up -d db embeddings rabbitmq maintenance_worker)
 
 # --- step 3: wait for healthy -----------------------------------------------
-say "3/4: wait 120s for db + embeddings to become healthy"
-deadline=$(( SECONDS + 120 ))
+timeout_s="${SILL_RESET_WAIT_HEALTHY_S:-300}"
+say "3/4: wait ${timeout_s}s for db + embeddings to become healthy"
+deadline=$(( SECONDS + timeout_s ))
 while (( SECONDS < deadline )); do
   all_healthy=1
   for svc in db embeddings; do
@@ -79,7 +80,7 @@ for line in raw.splitlines():
   sleep 5
 done
 if (( ! all_healthy )); then
-  echo "reset.sh: db/embeddings not healthy after 120s; check 'docker compose -f $COMPOSE_FILE logs'." >&2
+  echo "reset.sh: db/embeddings not healthy after ${timeout_s}s; check 'docker compose -f $COMPOSE_FILE logs'." >&2
   exit 1
 fi
 

@@ -34,6 +34,21 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 LOAD 'age';
 SET search_path = ag_catalog, "$user", public;
 
+-- AGE's cypher() function relies on session-level state set by `LOAD 'age'`.
+-- Without this directive every new connection would have to issue `LOAD
+-- 'age'` manually, otherwise create_memory() / create_memory_relationship()
+-- / etc. fail with `unhandled cypher(cstring) function call`. Setting it
+-- at the database level means psycopg2, asyncpg, psql, and embedded SQL
+-- all get AGE auto-loaded on connect.
+DO $$
+BEGIN
+    EXECUTE format(
+        'ALTER DATABASE %I SET session_preload_libraries = %L',
+        current_database(),
+        'age'
+    );
+END $$;
+
 -- ============================================================================
 -- GRAPH INITIALIZATION
 -- ============================================================================
