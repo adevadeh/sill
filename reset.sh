@@ -40,11 +40,13 @@ note() { printf '  %s\n' "$*"; }
 
 # --- step 1: down -v ---------------------------------------------------------
 say "1/4: docker compose down -v"
-docker compose -f "$COMPOSE_FILE" down -v --remove-orphans
+# Run from backend/ so the .env there (with any SILL_DB_CONTAINER /
+# POSTGRES_PORT overrides) targets the right project/containers.
+(cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" down -v --remove-orphans)
 
 # --- step 2: up --------------------------------------------------------------
 say "2/4: docker compose up -d db embeddings rabbitmq maintenance_worker"
-docker compose -f "$COMPOSE_FILE" up -d db embeddings rabbitmq maintenance_worker
+(cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" up -d db embeddings rabbitmq maintenance_worker)
 
 # --- step 3: wait for healthy -----------------------------------------------
 say "3/4: wait 120s for db + embeddings to become healthy"
@@ -52,7 +54,7 @@ deadline=$(( SECONDS + 120 ))
 while (( SECONDS < deadline )); do
   all_healthy=1
   for svc in db embeddings; do
-    status="$(docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
+    status="$(cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
 import json, sys
 raw = sys.stdin.read().strip()
 if not raw:

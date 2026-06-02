@@ -33,7 +33,7 @@ say() {
 # --- check 1 -------------------------------------------------------------------
 say "Check 1/4: docker compose services healthy"
 for svc in db embeddings; do
-  status="$(docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
+  status="$(cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
 import json, sys
 raw = sys.stdin.read().strip()
 if not raw:

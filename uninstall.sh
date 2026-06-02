@@ -49,10 +49,12 @@ note() { printf '  %s\n' "$*"; }
 
 # --- step 1: docker compose down ---------------------------------------------
 say "1/4: docker compose down"
+# Run from backend/ so the .env there (with any SILL_DB_CONTAINER /
+# POSTGRES_PORT overrides) targets the right project/containers.
 if (( KEEP_DATA )); then
-  docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
+  (cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" down --remove-orphans) || true
 else
-  docker compose -f "$COMPOSE_FILE" down -v --remove-orphans || true
+  (cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" down -v --remove-orphans) || true
 fi
 
 # --- step 2: uninstall backend -----------------------------------------------

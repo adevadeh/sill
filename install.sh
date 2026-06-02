@@ -132,8 +132,11 @@ step_install_backend() {
 # --- step 3: bring up docker stack --------------------------------------------
 step_docker_up() {
   say "Step 3/10: build images + start db, embeddings, rabbitmq, maintenance_worker"
-  run "docker compose -f \"$COMPOSE_FILE\" build"
-  run "docker compose -f \"$COMPOSE_FILE\" up -d db embeddings rabbitmq maintenance_worker"
+  # docker compose loads `.env` from cwd, not from the directory containing
+  # the compose file — so run from backend/ so the .env there (with any
+  # SILL_DB_CONTAINER / POSTGRES_PORT overrides) is honored.
+  run "(cd \"$SILL_DIR/backend\" && docker compose -f \"$COMPOSE_FILE\" build)"
+  run "(cd \"$SILL_DIR/backend\" && docker compose -f \"$COMPOSE_FILE\" up -d db embeddings rabbitmq maintenance_worker)"
 }
 
 # --- step 4: wait for healthchecks -------------------------------------------
@@ -149,7 +152,7 @@ step_wait_healthy() {
     local all_healthy=1
     for svc in $services; do
       local status
-      status="$(docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
+      status="$(cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
 import json, sys
 raw = sys.stdin.read().strip()
 if not raw:
