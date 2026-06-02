@@ -1,0 +1,6 @@
+{
+  "include": ["backend", "chorus"],
+  "extraPaths": ["backend"],
+  "pythonVersion": "3.10",
+  "reportMissingImports": "warning"
+}

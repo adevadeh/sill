@@ -20,9 +20,9 @@ from typing import Sequence
 
 def _cmd_seed_import(args: argparse.Namespace) -> int:
     # Lazy import so `sill --help` works even if psycopg2 isn't installed yet.
-    from scripts import seed_import as _seed_import
+    from scripts.seed_import import main as _seed_import_main
 
-    summary = _seed_import.main(args.path)
+    summary = _seed_import_main(args.path)
     return 0 if summary.errors == 0 else 1
 
 

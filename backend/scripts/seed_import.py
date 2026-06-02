@@ -56,7 +56,6 @@ from typing import Any
 
 try:
     import psycopg2
-    import psycopg2.extras
 except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "seed_import requires psycopg2-binary. Install the sill backend "

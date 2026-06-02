@@ -21,8 +21,8 @@ import subprocess
 from typing import Optional
 
 CONTAINER = os.environ.get("SILL_DB_CONTAINER", "sill_db")
-DB_USER = "agi_user"
-DB_NAME = "agi_db"
+DB_USER = os.environ.get("SILL_DB_USER", "sill")
+DB_NAME = os.environ.get("SILL_DB_NAME", "sill")
 DEFAULT_LIMIT = 5
 FAST_MIN_SIMILARITY = 0.25
 HYBRID_MIN_SIMILARITY = 0.0
