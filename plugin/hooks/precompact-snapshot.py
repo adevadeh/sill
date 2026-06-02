@@ -64,7 +64,7 @@ def get_current_focus() -> str:
     return ""
 
 
-def get_recent_memories(limit: int = 5, mem_type: str = None) -> list[dict]:
+def get_recent_memories(limit: int = 5, mem_type: str | None = None) -> list[dict]:
     """Get recent high-importance memories, optionally filtered by type."""
     type_filter = f"AND type = '{mem_type}'" if mem_type else ""
     sql = f"""

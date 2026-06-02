@@ -52,7 +52,7 @@ prompt_lower = prompt.lower()
 # Check if any correction pattern matches
 is_correction = any(re.search(pattern, prompt_lower) for pattern in CORRECTION_PATTERNS)
 
-def log(message: str, triggered: bool, matched_pattern: str = None):
+def log(message: str, triggered: bool, matched_pattern: str | None = None):
     """Append timestamped entry to log file."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     preview = message[:80].replace('\n', ' ')
