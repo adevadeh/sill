@@ -45,8 +45,8 @@ OPERATIONAL_TERMS = {
 
 # DB connection (overridable via env vars)
 DB_CONTAINER = os.environ.get("SILL_DB_CONTAINER", "sill_db")
-DB_USER = os.environ.get("SILL_DB_USER", "agi_user")
-DB_NAME = os.environ.get("SILL_DB_NAME", "agi_db")
+DB_USER = os.environ.get("SILL_DB_USER", "sill")
+DB_NAME = os.environ.get("SILL_DB_NAME", "sill")
 
 # Episodic memory archive (optional integration)
 EPISODIC_CLI_ENV = os.environ.get("SILL_EPISODIC_MEMORY_PATH", "").strip()

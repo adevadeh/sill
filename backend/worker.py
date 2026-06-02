@@ -213,9 +213,9 @@ logger = logging.getLogger('heartbeat_worker')
 DB_CONFIG = {
     'host': os.getenv('POSTGRES_HOST', 'localhost'),
     'port': int(os.getenv('POSTGRES_PORT', 5432)),
-    'database': os.getenv('POSTGRES_DB', 'agi_db'),
-    'user': os.getenv('POSTGRES_USER', 'agi_user'),
-    'password': os.getenv('POSTGRES_PASSWORD', 'agi_password'),
+    'database': os.getenv('POSTGRES_DB', 'sill'),
+    'user': os.getenv('POSTGRES_USER', 'sill'),
+    'password': os.getenv('POSTGRES_PASSWORD', 'sill_password'),
 }
 
 # LLM configuration (defaults; may be overridden by DB config via `agi init`)
@@ -234,11 +234,11 @@ SYNTHESIS_MODEL = os.getenv("SYNTHESIS_MODEL", "llama3.1:70b")
 # RabbitMQ (optional outbox/inbox bridge; uses management HTTP API).
 RABBITMQ_ENABLED = os.getenv("RABBITMQ_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 RABBITMQ_MANAGEMENT_URL = os.getenv("RABBITMQ_MANAGEMENT_URL", "http://rabbitmq:15672").rstrip("/")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", "agi")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "agi_password")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "sill")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "sill_password")
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
-RABBITMQ_OUTBOX_QUEUE = os.getenv("RABBITMQ_OUTBOX_QUEUE", "agi.outbox")
-RABBITMQ_INBOX_QUEUE = os.getenv("RABBITMQ_INBOX_QUEUE", "agi.inbox")
+RABBITMQ_OUTBOX_QUEUE = os.getenv("RABBITMQ_OUTBOX_QUEUE", "sill.outbox")
+RABBITMQ_INBOX_QUEUE = os.getenv("RABBITMQ_INBOX_QUEUE", "sill.inbox")
 RABBITMQ_POLL_INBOX_EVERY = float(os.getenv("RABBITMQ_POLL_INBOX_EVERY", 1.0))
 
 # System prompt for heartbeat decisions

@@ -346,9 +346,9 @@ def _get_dsn() -> str:
     """Build Postgres DSN from env vars (same logic as agi_mcp_server)."""
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
-    db = os.getenv("POSTGRES_DB", "agi_db")
-    user = os.getenv("POSTGRES_USER", "agi_user")
-    pw = os.getenv("POSTGRES_PASSWORD", "agi_password")
+    db = os.getenv("POSTGRES_DB", "sill")
+    user = os.getenv("POSTGRES_USER", "sill")
+    pw = os.getenv("POSTGRES_PASSWORD", "sill_password")
     return f"postgresql://{user}:{pw}@{host}:{port}/{db}"
 
 

@@ -21,9 +21,9 @@ LOG_FILE = Path(os.environ.get("SILL_LOG_DIR", "/tmp")) / "reuse-tracking.log"
 # Database connection
 DB_HOST = os.environ.get("POSTGRES_HOST", "localhost")
 DB_PORT = os.environ.get("POSTGRES_PORT", "5432")
-DB_NAME = os.environ.get("POSTGRES_DB", "agi_db")
-DB_USER = os.environ.get("POSTGRES_USER", "agi_user")
-DB_PASS = os.environ.get("POSTGRES_PASSWORD", "agi_password")
+DB_NAME = os.environ.get("POSTGRES_DB", "sill")
+DB_USER = os.environ.get("POSTGRES_USER", "sill")
+DB_PASS = os.environ.get("POSTGRES_PASSWORD", "sill_password")
 
 
 def log(message: str):

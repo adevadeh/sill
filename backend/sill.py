@@ -16,8 +16,8 @@ import re
 from pathlib import Path
 
 DB_CONTAINER = "sill_db"
-DB_USER = "agi_user"
-DB_NAME = "agi_db"
+DB_USER = "sill"
+DB_NAME = "sill"
 
 HEARTBEAT_LOGS = Path(__file__).parent / "docs" / "gnomon-sessions"
 QUESTIONS_FILE = Path(__file__).parent / "docs" / "questions-for-william.md"

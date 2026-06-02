@@ -43,9 +43,9 @@ def _print_err(msg: str) -> None:
 def _env_dsn() -> str:
     db_host = os.getenv("POSTGRES_HOST", "localhost")
     db_port = os.getenv("POSTGRES_PORT", "5432")
-    db_name = os.getenv("POSTGRES_DB", "agi_db")
-    db_user = os.getenv("POSTGRES_USER", "agi_user")
-    db_password = os.getenv("POSTGRES_PASSWORD", "agi_password")
+    db_name = os.getenv("POSTGRES_DB", "sill")
+    db_user = os.getenv("POSTGRES_USER", "sill")
+    db_password = os.getenv("POSTGRES_PASSWORD", "sill_password")
     return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
 
 
