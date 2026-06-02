@@ -1,18 +1,14 @@
 """
 sill — top-level CLI for the Sill memory system.
 
-Subcommands are wired progressively across the extraction tasks:
+Subcommands wired so far:
 
   sill seed import <path>   Import a JSONL methodology seed into the db
-                            (wired in Task 15)
+                            (Task 15)
   sill db psql              Drop into a psql shell against the db container
                             (wired in a later task)
   sill verify               Run the standard smoke-check suite
                             (wired in a later task)
-
-For now this is a stub: each subcommand parses cleanly and prints usage,
-but the underlying implementation raises NotImplementedError noting which
-task will wire it.
 """
 
 from __future__ import annotations
@@ -23,9 +19,11 @@ from typing import Sequence
 
 
 def _cmd_seed_import(args: argparse.Namespace) -> int:
-    raise NotImplementedError(
-        f"seed import {args.path!r} — wired in Task 15 (seed_import.py + roundtrip test)"
-    )
+    # Lazy import so `sill --help` works even if psycopg2 isn't installed yet.
+    from scripts import seed_import as _seed_import
+
+    summary = _seed_import.main(args.path)
+    return 0 if summary.errors == 0 else 1
 
 
 def _cmd_db_psql(_args: argparse.Namespace) -> int:
