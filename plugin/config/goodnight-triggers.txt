@@ -1,0 +1,10 @@
+# Phrases that fire the goodnight-checkpoint hook. Substring match,
+# case-insensitive, word-bounded. Lines starting with # are comments.
+goodnight
+good night
+going to sleep
+going to bed
+off to bed
+calling it a night
+signing off
+see you tomorrow
