@@ -1,0 +1,28 @@
+services:
+  db:
+    build: .
+    container_name: ${SILL_DB_CONTAINER:-sill_db}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sill}
+      POSTGRES_USER: ${POSTGRES_USER:-sill}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sill_password}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sill} -d ${POSTGRES_DB:-sill}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    command:
+      - postgres
+      - -c
+      - search_path=ag_catalog,public
+      - -c
+      - app.embedding_dimension=${EMBEDDING_DIMENSION:-768}
+
+volumes:
+  postgres_data:
