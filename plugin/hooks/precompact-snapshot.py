@@ -25,8 +25,8 @@ OUTPUT_FILE = Path(
 
 # Database connection (overridable)
 DB_CONTAINER = os.environ.get("SILL_DB_CONTAINER", "sill_db")
-DB_USER = os.environ.get("SILL_DB_USER", "agi_user")
-DB_NAME = os.environ.get("SILL_DB_NAME", "agi_db")
+DB_USER = os.environ.get("SILL_DB_USER", "sill")
+DB_NAME = os.environ.get("SILL_DB_NAME", "sill")
 
 
 def query_postgres(sql: str) -> list[list[str]]:

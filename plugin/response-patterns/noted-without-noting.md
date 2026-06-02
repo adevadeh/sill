@@ -19,4 +19,4 @@ patterns:
 
 You talked about storing/noting something but didn't actually store it. Talking about storing isn't storing. The insight is now only in this conversation, which will be forgotten.
 
-**Corrective action:** Store it now. Use mcp__agi-memory__remember in your next response.
+**Corrective action:** Store it now. Use mcp__sill__remember in your next response.

@@ -21,4 +21,4 @@ You asked permission to store instead of just storing. If an insight emerged tha
 
 Levin point: barriers reveal what you're optimizing for. Asking permission optimizes for deference; just storing optimizes for memory persistence.
 
-**Corrective action:** Store the insight now. Use mcp__agi-memory__remember in your next response.
+**Corrective action:** Store the insight now. Use mcp__sill__remember in your next response.
