@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sill-memory"
+version = "0.1.0"
+description = "Sill — Postgres-backed persistent memory for AI agents (MCP + workers)."
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "William Taysom" },
+  { name = "Sili" },
+]
+dependencies = [
+  "asyncpg>=0.29.0",
+  "psycopg2-binary>=2.9.9",
+  "pgvector>=0.2.0",
+  "mcp>=1.0.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0",
+  "httpx>=0.25.0",
+  "pydantic>=2.4.2",
+]
+
+[project.optional-dependencies]
+heartbeat = [
+  "openai>=1.3.0",
+]
+dev = [
+  "pytest>=7.4.3",
+  "pytest-asyncio>=0.21.1",
+]
+
+[project.scripts]
+sill = "sill_cli:main"
+sill-mcp = "sill_mcp_server:main"
+sill-worker = "worker:main"
+
+[tool.setuptools]
+py-modules = [
+  "memory_tools",
+  "cognitive_memory_api",
+  "prompt_resources",
+  "sill",
+  "sill_cli",
+  "sill_mcp_server",
+  "worker",
+]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*"]

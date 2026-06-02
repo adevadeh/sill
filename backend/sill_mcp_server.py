@@ -994,7 +994,7 @@ async def _run_server(dsn: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="agi-mcp", description="MCP server exposing CognitiveMemory tools over stdio.")
+    p = argparse.ArgumentParser(prog="sill-mcp", description="MCP server exposing CognitiveMemory tools over stdio.")
     p.add_argument("--dsn", default=os.getenv("AGI_DB_DSN") or None, help="Postgres DSN; defaults to POSTGRES_* env vars")
     return p
 

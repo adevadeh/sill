@@ -5,9 +5,10 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-COPY pyproject.toml README.md /app/
-COPY agi_cli.py agi_init.py agi_mcp_server.py conversation.py ingest.py memory_tools.py worker.py cognitive_memory_api.py /app/
+COPY pyproject.toml /app/
+COPY cognitive_memory_api.py memory_tools.py prompt_resources.py sill.py sill_cli.py sill_mcp_server.py worker.py /app/
+COPY scripts/ /app/scripts/
 
 RUN pip install --no-cache-dir .
 
-CMD ["agi-worker"]
+CMD ["sill-worker"]

@@ -2277,7 +2277,7 @@ async def _amain(mode: str) -> None:
 
 def main() -> int:
     """Console-script entry point."""
-    p = argparse.ArgumentParser(prog="agi-worker", description="Run AGI background workers.")
+    p = argparse.ArgumentParser(prog="sill-worker", description="Run Sill background workers.")
     p.add_argument(
         "--mode",
         choices=["heartbeat", "maintenance", "both", "research"],
