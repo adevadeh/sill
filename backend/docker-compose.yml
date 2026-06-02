@@ -23,6 +23,63 @@ services:
       - search_path=ag_catalog,public
       - -c
       - app.embedding_dimension=${EMBEDDING_DIMENSION:-768}
+    networks:
+      - public
+      - private
+
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    container_name: ${SILL_EMBEDDINGS_CONTAINER:-sill_embeddings}
+    platform: linux/amd64
+    command:
+      - --model-id
+      - ${EMBEDDING_MODEL_ID:-unsloth/embeddinggemma-300m}
+      - --dtype
+      - float32
+    environment:
+      EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-unsloth/embeddinggemma-300m}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
+    expose:
+      - "80"
+    volumes:
+      - embeddings_cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - private
+      - public  # needed for initial model download from HuggingFace
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: ${SILL_RABBITMQ_CONTAINER:-sill_rabbitmq}
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-sill}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-sill_password}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - public
+      - private
 
 volumes:
   postgres_data:
+  embeddings_cache:
+  rabbitmq_data:
+
+networks:
+  private:
+    internal: true
+  public:
