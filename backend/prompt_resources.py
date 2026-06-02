@@ -120,15 +120,13 @@ def compose_personhood_prompt(kind: PromptKind) -> str:
             "narrative_identity",
             "relational_system",
         ]
-    elif kind == "conversation":
+    else:  # "conversation"
         keys = [
             "core_identity",
             "relational_system",
             "affective_system",
             "conversational_presence",
         ]
-    else:
-        raise ValueError(f"Unknown kind: {kind}")
 
     existing = [k for k in keys if k in lib.modules]
     return lib.compose(existing)
