@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/attribution-check.py",
+            "statusMessage": "Checking attribution claims"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/state-language-check.py",
+            "statusMessage": "Checking state-language claims"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/spontaneous-recall.py",
+            "statusMessage": "Recalling relevant memory",
+            "timeout": 45
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/response-patterns.py",
+            "statusMessage": "Checking response patterns",
+            "timeout": 45
+          },
+          {
+            "type": "command",
+            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/track-reuse.py",
+            "statusMessage": "Checking memory reuse",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
