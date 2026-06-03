@@ -287,6 +287,20 @@ PY
   fi
 }
 
+# Resolve the interpreter that has the backend deps (psycopg2, asyncpg, …)
+# installed, so hook commands run under it instead of a bare system python3 that
+# can't import them. Mirrors how step 2 installs the backend: pipx venv first,
+# then the ~/.local/share/sill-venv fallback, then a last-resort bare python3.
+sill_python() {
+  if command -v pipx >/dev/null 2>&1; then
+    local cand="${PIPX_HOME:-$HOME/.local/pipx}/venvs/sill-memory/bin/python"
+    [[ -x "$cand" ]] && { printf '%s' "$cand"; return; }
+  fi
+  local venv_py="$HOME/.local/share/sill-venv/bin/python"
+  [[ -x "$venv_py" ]] && { printf '%s' "$venv_py"; return; }
+  printf 'python3'
+}
+
 # --- step 8: optional --hooks-for project wiring -----------------------------
 step_hooks_for_project() {
   say "Step 8/10: per-project hook config"
@@ -298,20 +312,24 @@ step_hooks_for_project() {
   target="$(cd "$HOOKS_FOR" && pwd)"
   local plugin_dir="$SILL_DIR/plugin"
   local template="$SILL_DIR/plugin/codex.hooks.json.template"
+  local sill_py
+  sill_py="$(sill_python)"
 
   # Codex per-project hooks.
   local codex_dst="$target/.codex/hooks.json"
   if (( DRY_RUN )); then
-    note "DRY: would render $template -> $codex_dst with SILL_PLUGIN_DIR=$plugin_dir"
+    note "DRY: would render $template -> $codex_dst with SILL_PLUGIN_DIR=$plugin_dir SILL_PYTHON=$sill_py"
   else
     mkdir -p "$(dirname "$codex_dst")"
     if [[ -f "$codex_dst" ]]; then
       note "  $codex_dst already exists; leaving as-is (delete to re-render)"
     else
-      python3 - "$template" "$codex_dst" "$plugin_dir" <<'PY'
+      python3 - "$template" "$codex_dst" "$plugin_dir" "$sill_py" <<'PY'
 import pathlib, sys
-src, dst, plugin = sys.argv[1:4]
-text = pathlib.Path(src).read_text().replace("{{SILL_PLUGIN_DIR}}", plugin)
+src, dst, plugin, py = sys.argv[1:5]
+text = (pathlib.Path(src).read_text()
+        .replace("{{SILL_PLUGIN_DIR}}", plugin)
+        .replace("{{SILL_PYTHON}}", py))
 pathlib.Path(dst).write_text(text)
 print(f"  wrote {dst}")
 PY
@@ -324,10 +342,12 @@ PY
     note "DRY: would idempotently merge hooks block into $claude_dst"
   else
     mkdir -p "$(dirname "$claude_dst")"
-    python3 - "$template" "$claude_dst" "$plugin_dir" <<'PY'
+    python3 - "$template" "$claude_dst" "$plugin_dir" "$sill_py" <<'PY'
 import json, pathlib, sys
-template_path, dst_path, plugin = sys.argv[1:4]
-template = json.loads(pathlib.Path(template_path).read_text().replace("{{SILL_PLUGIN_DIR}}", plugin))
+template_path, dst_path, plugin, py = sys.argv[1:5]
+template = json.loads(pathlib.Path(template_path).read_text()
+                      .replace("{{SILL_PLUGIN_DIR}}", plugin)
+                      .replace("{{SILL_PYTHON}}", py))
 dst = pathlib.Path(dst_path)
 data = {}
 if dst.exists():

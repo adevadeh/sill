@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/attribution-check.py",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/attribution-check.py",
             "statusMessage": "Checking attribution claims"
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/state-language-check.py",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/state-language-check.py",
             "statusMessage": "Checking state-language claims"
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/spontaneous-recall.py",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/spontaneous-recall.py",
             "statusMessage": "Recalling relevant memory",
             "timeout": 45
           }
@@ -39,13 +39,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/response-patterns.py",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/response-patterns.py",
             "statusMessage": "Checking response patterns",
             "timeout": 45
           },
           {
             "type": "command",
-            "command": "python3 {{SILL_PLUGIN_DIR}}/hooks/track-reuse.py",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/track-reuse.py",
             "statusMessage": "Checking memory reuse",
             "timeout": 30
           }

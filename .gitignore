@@ -27,6 +27,9 @@ ENV/
 *.swo
 .DS_Store
 
+# Generated per-project hook config (machine-specific absolute paths)
+.codex/hooks.json
+
 # Postgres bind mounts
 postgres_data/
 
