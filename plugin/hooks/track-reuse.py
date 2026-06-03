@@ -14,7 +14,15 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import psycopg2
+try:
+    import psycopg2
+except ModuleNotFoundError:
+    # install.sh wires hook commands to run under the backend's interpreter,
+    # which has psycopg2. If this hook is somehow launched under an interpreter
+    # that lacks it, degrade to a no-op rather than crashing the agent's Stop
+    # event — consistent with how the rest of this hook treats failures as
+    # non-fatal.
+    psycopg2 = None
 
 LOG_FILE = Path(os.environ.get("SILL_LOG_DIR", "/tmp")) / "reuse-tracking.log"
 
@@ -33,6 +41,9 @@ def log(message: str):
 
 
 def get_db_connection():
+    if psycopg2 is None:
+        log("psycopg2 unavailable; skipping reuse tracking")
+        return None
     try:
         return psycopg2.connect(
             host=DB_HOST,
