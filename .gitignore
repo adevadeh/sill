@@ -42,3 +42,6 @@ logs/
 .coverage
 htmlcov/
 .tox/
+
+# Runtime memory-health snapshots (local state, machine-specific)
+backend/memory_health_history.jsonl
