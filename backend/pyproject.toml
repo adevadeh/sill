@@ -47,6 +47,7 @@ py-modules = [
   "sill_cli",
   "sill_mcp_server",
   "worker",
+  "beat_worker",
 ]
 include-package-data = false
 
