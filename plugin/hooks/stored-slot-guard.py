@@ -19,10 +19,15 @@ the beat worker pays nothing for this check.
 
 Checked form: receipt lines — `Stored:` at line start with an id following.
 Mention exemption (head-only): a line is skipped as specimen material when
-its HEAD — the text before "Stored" — contains a backtick, or when the line
-is blockquoted. The exemption is head-only: an id backticked AFTER a bare
-line-start `Stored:` is still checked, so a confession should backtick or
-blockquote the whole receipt line, not just the id. Known limit: a forgery
+its HEAD — the text before "Stored"/"stored", matched case-insensitively —
+contains a backtick, or when the line is blockquoted. The exemption is
+head-only: an id backticked AFTER a bare line-start `Stored:` is still
+checked, so a confession should backtick or blockquote the whole receipt
+line, not just the id. The head split is case-insensitive by design and
+must stay that way: a case-sensitive split finds no match on a lowercase
+receipt and returns the WHOLE LINE as head, so any backtick anywhere on
+the line — even an unrelated trailing aside — falsely exempts it (this
+guard's own 2026-08-04 bug, closed same-day). Known limit: a forgery
 wearing full quote typography around the whole line also passes this guard
 — a separate act-history check (tool-type-witness.py) and any downstream
 record checks cover that side.
@@ -94,7 +99,7 @@ def main() -> None:
 
     ids = []
     for line in text.splitlines():
-        head = line.split("Stored", 1)[0]
+        head = re.split(r"stored", line, maxsplit=1, flags=re.IGNORECASE)[0]
         if "`" in head or line.lstrip().startswith(">"):
             continue  # quoted/backticked context: specimen material, not a receipt
         m = RECEIPT_LINE.match(line)

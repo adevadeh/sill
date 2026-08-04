@@ -106,6 +106,45 @@ def test_lowercase_receipt_reaches_the_store_check(tmp_path):
     )
 
 
+def test_lowercase_receipt_with_trailing_backtick_reaches_the_store_check(tmp_path):
+    """Regression for the case-sensitive head-split bug the lowercase fast
+    path exposed: `head = line.split("Stored", 1)[0]` is case-SENSITIVE, so
+    on a lowercase 'stored:' line it never finds a split point and returns
+    the WHOLE LINE as head. The mention exemption ("`" in head) then fires
+    on any backtick anywhere on the line — including a harmless trailing
+    parenthetical — falsely exempting a genuine lowercase receipt.
+
+    Same non-distinguishing-outcome problem this file's docstrings already
+    name: a store failing open produces the same 'exit 0, no deny' as the
+    exemption bug firing, so — like the test above — this does not assert
+    on stdout. It proves the guard reached its per-id store-check
+    subprocess call via the docker-invocation marker.
+    """
+    marker = tmp_path / "docker-invoked.marker"
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text(f"#!/bin/sh\necho invoked >> {marker}\nexit 1\n")
+    fake_docker.chmod(0o755)
+
+    r = run("stored-slot-guard.py", {
+        "tool_name": "Write", "tool_input": {
+            "file_path": "journal/r-001.md",
+            "content": "stored: deadbeef-1111-2222-3333-444455556666 (see `note`)\n"}},
+        env_extra={"PATH": f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}"})
+
+    # Same outward contract as test_store_unreachable_never_blocks: a down
+    # store must never block the write.
+    assert r.returncode == 0
+    assert "deny" not in r.stdout
+    # The property this test actually exists to check: the trailing
+    # backtick — which is not part of "Stored" at all — must not exempt a
+    # genuine lowercase receipt line from the store check.
+    assert marker.exists(), (
+        "guard never invoked docker — the case-sensitive head split let a "
+        "trailing backtick on this lowercase receipt line exempt it before "
+        "reaching the per-id store-check code path"
+    )
+
+
 def test_witness_denies_unquoted_carrying_act_claim():
     r = run("tool-type-witness.py", {
         "tool_name": "Write", "tool_input": {
