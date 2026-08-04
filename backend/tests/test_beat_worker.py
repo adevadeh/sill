@@ -8,26 +8,29 @@ import pytest
 import beat_worker as bw
 
 
-VOICES_TOML = """
-[[voice]]
-name = "analyst"
-prompt = "prompts/analyst.md"
-transcripts = "logs/analyst"
-output_glob = "notes/analyst-*.md"
-kickoff = "Begin."
-
-[[voice]]
-name = "reflector"
-prompt = "prompts/reflector.md"
-transcripts = "logs/reflector"
-output_glob = "journal/reflector-*.md"
-kickoff = "Begin."
-"""
+VOICES_JSON = json.dumps({
+    "voices": [
+        {
+            "name": "analyst",
+            "prompt": "prompts/analyst.md",
+            "transcripts": "logs/analyst",
+            "output_glob": "notes/analyst-*.md",
+            "kickoff": "Begin.",
+        },
+        {
+            "name": "reflector",
+            "prompt": "prompts/reflector.md",
+            "transcripts": "logs/reflector",
+            "output_glob": "journal/reflector-*.md",
+            "kickoff": "Begin.",
+        },
+    ],
+})
 
 
 def test_load_voices_reads_config(tmp_path):
-    cfg = tmp_path / "beats.toml"
-    cfg.write_text(VOICES_TOML)
+    cfg = tmp_path / "beats.json"
+    cfg.write_text(VOICES_JSON)
     voices = bw.load_voices(cfg)
     assert [v.name for v in voices] == ["analyst", "reflector"]
     assert voices[0].prompt.endswith("prompts/analyst.md")
@@ -35,8 +38,8 @@ def test_load_voices_reads_config(tmp_path):
 
 
 def test_load_voices_rejects_empty_config(tmp_path):
-    cfg = tmp_path / "beats.toml"
-    cfg.write_text("")
+    cfg = tmp_path / "beats.json"
+    cfg.write_text("{}")
     with pytest.raises(ValueError) as e:
         bw.load_voices(cfg)
     assert "no voices" in str(e.value).lower()

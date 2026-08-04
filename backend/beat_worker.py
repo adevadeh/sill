@@ -4,8 +4,8 @@ Beat worker: a config-driven, alternating reflective loop.
 
 Every SILL_BEAT_INTERVAL_SECONDS (default 7200 = 2h), spawns one headless
 agent-CLI session running the next voice in a configured rotation (see
-SILL_BEAT_CONFIG, default beats.toml under the project root; example at
-beats.example.toml). Each voice gets its own standing prompt, its own
+SILL_BEAT_CONFIG, default beats.json under the project root; example at
+beats.example.json). Each voice gets its own standing prompt, its own
 transcript directory, and — optionally — an output_glob checked after every
 beat so an exit-0 subprocess that produced nothing does not get counted as
 a success.
@@ -29,16 +29,10 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # stdlib TOML parsing landed in Python 3.11
-    tomllib = None
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +55,7 @@ logger = logging.getLogger("beat_worker")
 
 def _config_path() -> Path:
     override = os.environ.get("SILL_BEAT_CONFIG")
-    return Path(override) if override else PROJECT_ROOT / "beats.toml"
+    return Path(override) if override else PROJECT_ROOT / "beats.json"
 
 
 def _configure_logging() -> None:
@@ -87,9 +81,10 @@ def _configure_logging() -> None:
 
 @dataclass(frozen=True)
 class Voice:
-    """One rotation slot, read verbatim from a `[[voice]]` table in the TOML
-    config. Paths (prompt/transcripts/output_glob) stay relative strings —
-    they're resolved against PROJECT_ROOT at spawn/check time, not here.
+    """One rotation slot, read verbatim from one entry of the `voices` array
+    in the JSON config. Paths (prompt/transcripts/output_glob) stay relative
+    strings — they're resolved against PROJECT_ROOT at spawn/check time, not
+    here.
     """
     name: str
     prompt: str
@@ -99,31 +94,24 @@ class Voice:
 
 
 def load_voices(path: Path) -> list[Voice]:
-    """Read voice definitions from a beats.toml config. Each `[[voice]]`
-    table becomes one Voice, in rotation order.
+    """Read voice definitions from a beats.json config. Each entry in the
+    top-level `voices` array becomes one Voice, in rotation order.
     """
-    if tomllib is None:
-        raise RuntimeError(
-            "beat_worker needs Python 3.11+ for the stdlib `tomllib` TOML "
-            "parser (no third-party TOML dependency is added to work around "
-            f"this); the running interpreter is {sys.version.split()[0]}."
-        )
-
     path = Path(path)
     try:
-        with path.open("rb") as fh:
-            data = tomllib.load(fh)
-    except tomllib.TOMLDecodeError as exc:
-        raise ValueError(f"invalid TOML in {path}: {exc}") from exc
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {path}: {exc}") from exc
 
-    raw_voices = data.get("voice", [])
+    raw_voices = data.get("voices", []) if isinstance(data, dict) else []
     if not raw_voices:
         raise ValueError(f"no voices defined in {path}")
 
     voices = []
     for i, entry in enumerate(raw_voices):
         if not isinstance(entry, dict):
-            raise ValueError(f"voice entry {i} in {path} is not a table")
+            raise ValueError(f"voice entry {i} in {path} is not an object")
         try:
             voices.append(Voice(
                 name=entry["name"],
