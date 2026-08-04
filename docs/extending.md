@@ -218,28 +218,39 @@ To suppress the focus-update side effect, leave
 
 ### Database connection
 
-| Var                  | Default       | Used by |
-|----------------------|---------------|---------|
-| `SILL_DB_CONTAINER`  | `sill_db`     | `recall_lib`, `spontaneous-recall`, `precompact-snapshot`, `goodnight-checkpoint`, the install/verify scripts |
-| `SILL_DB_USER`       | varies        | `recall_lib` (`sill`), `goodnight-checkpoint` (`sill`), `spontaneous-recall` (`agi_user`), `precompact-snapshot` (`agi_user`) |
-| `SILL_DB_NAME`       | varies        | same split as above |
-| `POSTGRES_HOST`      | `localhost`   | `track-reuse` (direct psycopg2) |
-| `POSTGRES_PORT`      | `5432`        | `track-reuse` |
-| `POSTGRES_DB`        | `agi_db`      | `track-reuse` |
-| `POSTGRES_USER`      | `agi_user`    | `track-reuse` |
-| `POSTGRES_PASSWORD`  | `agi_password`| `track-reuse` |
+| Var                  | Default        | Used by |
+|----------------------|----------------|---------|
+| `SILL_DB_CONTAINER`  | `sill_db`      | `recall_lib`, `spontaneous-recall`, `precompact-snapshot`, `goodnight-checkpoint`, `backend/sill.py` (`notice`), `backend/scripts/decompose_event.py`, the install/verify scripts |
+| `SILL_DB_USER`       | `sill`         | same set as `SILL_DB_CONTAINER` |
+| `SILL_DB_NAME`       | `sill`         | same set as `SILL_DB_CONTAINER` |
+| `POSTGRES_HOST`      | `localhost`    | `track-reuse` (direct `psycopg2`, not `docker exec`) |
+| `POSTGRES_PORT`      | `5432`         | `track-reuse` |
+| `POSTGRES_DB`        | `sill`         | `track-reuse` |
+| `POSTGRES_USER`      | `sill`         | `track-reuse` |
+| `POSTGRES_PASSWORD`  | `sill_password`| `track-reuse` |
 
-**The mismatch.** `install.sh` creates the db as `sill` / `sill`,
-but `spontaneous-recall`, `precompact-snapshot`, and `track-reuse`
-default to the upstream `agi_*` names. Until the defaults are
-unified, set this in your shell:
+Every one of these already matches what `backend/docker-compose.yml`
+and `backend/.env.example` provision by default — there is no
+mismatch to work around on a fresh install (earlier drafts of this
+doc described one; it was fixed in the hooks' own code before it was
+fixed here). Confirm for yourself:
 
 ```bash
-export SILL_DB_USER=sill
-export SILL_DB_NAME=sill
-export POSTGRES_DB=sill
-export POSTGRES_USER=sill
-export POSTGRES_PASSWORD=sill_password
+grep -rn "agi_user\|agi_db\|agi_password" plugin/ backend/*.py backend/scripts/*.py
+# -> no output
+```
+
+Only override these if you renamed the container, user, or database
+away from the shipped defaults (e.g. running a second Sill instance
+side by side):
+
+```bash
+export SILL_DB_CONTAINER=sill_db_test
+export SILL_DB_USER=sill_test
+export SILL_DB_NAME=sill_test
+export POSTGRES_DB=sill_test
+export POSTGRES_USER=sill_test
+export POSTGRES_PASSWORD=sill_test_password
 ```
 
 ### Paths
@@ -254,7 +265,36 @@ export POSTGRES_PASSWORD=sill_password
 | `SILL_RESPONSE_PATTERNS_DIR` | `<plugin>/response-patterns`           | Where the response-patterns hook reads rule files from |
 | `SILL_BEAT_SESSIONS_DIR`     | `<root>/docs/gnomon-sessions`          | Where attribution-check looks for `beat-NNN-*.md` files |
 | `SILL_RESEARCH_MANIFEST`     | `<root>/docs/research-manifest.json`   | Optional manifest read by precompact-snapshot |
-| `SILL_LOG_DIR`               | `/tmp`                                 | Where every hook writes its `.log` file |
+| `SILL_LOG_DIR`               | `/tmp`                                 | Where every hook's `.log` file lives, plus every sidecar/state file: `recall-sidecar-<session>.jsonl`, `response-patterns-last-<session>.json`, `response-patterns-data.jsonl`, `auto-stored-insights.jsonl`, `verification-state.json`, `cc-session-by-pid/` |
+
+### Headless / interactive gate (spontaneous-recall)
+
+Read fresh on every `UserPromptSubmit`; none of these are set by
+`install.sh` — they're for the caller (a scheduler, a wrapping
+front-end) to set on the child session it spawns.
+
+| Var                   | Default | Purpose |
+|------------------------|---------|---------|
+| `SILL_DETACHED_BEAT`   | unset   | `1` = an authoritative "this session is headless" flag a scheduler sets on every child it spawns. Silences recall injection and the `[TIME]` header's clock-advance. |
+| `SILL_INTERACTIVE`     | unset   | `1` = override back to interactive even though the entrypoint looks headless (an `sdk*` `CLAUDE_CODE_ENTRYPOINT`) — for a front-end that drives `--print` on behalf of a real person. |
+| `SILL_HEADLESS_TOOL`   | unset   | `1` = explicit "be quiet" that always wins, regardless of the other two. |
+
+The gate defaults to interactive and excludes only the known-headless
+family (blacklist, not whitelist), so a front-end this project has
+never heard of is treated as a human by default. See
+`docs/hooks.md`'s spontaneous-recall section for the full precedence
+order.
+
+### Mint-path auto-store (response-patterns)
+
+| Var                    | Default                                | Purpose |
+|-------------------------|-----------------------------------------|---------|
+| `SILL_HOME_PROJECT`    | unset                                   | Names the one project the insight auto-store is meant to run in. **Fail-closed**: unset means every cwd — including a real project — reads as "home", so auto-store stays log-only everywhere until you configure this. |
+| `SILL_SPEAKER_SELF`    | `instance`                              | The `--speaker` value stamped on an auto-stored memory. Rename it once you've christened the running instance. |
+| `SILL_INSIGHT_DETECT`  | `0` (off)                               | `1` turns on the local-model insight detector. Leave off unless you have a model reachable at `SILL_OLLAMA_URL` — otherwise every Stop event pays a timeout for nothing. |
+| `SILL_CLI`             | `sill`                                  | The command the auto-store path shells out to (`$SILL_CLI notice ...`). Point it at a full path if `sill` isn't on the hook's PATH. |
+| `SILL_OLLAMA_URL`      | `http://localhost:11434/api/generate`   | Only consulted when `SILL_INSIGHT_DETECT=1`. |
+| `SILL_OLLAMA_MODEL`    | `gemma3:12b`                            | Only consulted when `SILL_INSIGHT_DETECT=1`. |
 
 ### Integrations
 
@@ -286,11 +326,16 @@ Useful when running multiple Sill stacks on the same host.
 ## A note on the upstream
 
 Sill was extracted from agi-memory and still carries some upstream
-shape — the `agi_user` / `agi_db` defaults in three hooks, the
-attribution-check F1 path that only fires in the original session
-log directory, and the worldview/identity tables that most installs
-won't touch. None of this is harmful, but it's worth knowing about
-when something doesn't quite line up with what's documented here.
+shape — `attribution-check`'s F2 patterns hardcode the origin
+project's own example names rather than a portable placeholder (see
+`docs/hooks.md`'s attribution-check section for how to adapt it),
+the F1 path only fires when a `docs/gnomon-sessions/` directory
+exists, and the worldview/identity tables that most installs won't
+touch. The database-credential mismatch a previous version of this
+doc warned about here is gone — every hook has defaulted to `sill` /
+`sill` for a while now (see the "Database connection" table above).
+None of the above is harmful, but it's worth knowing about when
+something doesn't quite line up with what's documented here.
 
 The methodology pack itself, by contrast, is written to be portable.
 Twenty-two memories about inquiry, verification, recall patterns,

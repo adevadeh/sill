@@ -73,6 +73,32 @@ gunzip -c backups/<file>.sql.gz | docker exec -i sill_db psql -U sill -d sill
 ./verify.sh
 ```
 
+### Hook upgrades and `--hooks-for`
+
+`./upgrade.sh` only migrates the database — it never touches a
+project's hook wiring. Picking up hooks added after your project was
+first wired means re-running `./install.sh --hooks-for /path/to/project`,
+and the two files that command writes behave differently on a re-run:
+
+- **`.claude/settings.local.json`** always merges idempotently — new
+  hook entries are appended, existing ones untouched. Re-running
+  `--hooks-for` is enough; nothing else to do.
+- **`.codex/hooks.json`** is skipped entirely if the file already
+  exists (`install.sh`'s own note: `"already exists; leaving as-is
+  (delete to re-render)"`) — a project wired before a hook was added
+  keeps missing it on the Codex side until you delete the file and
+  re-render it.
+
+Check whether a given project's Codex wiring is stale, and fix it if so:
+
+```bash
+grep -q "clear-handoff" /path/to/project/.codex/hooks.json \
+  && echo "up to date" || echo "STALE — delete and re-render"
+# if stale:
+rm /path/to/project/.codex/hooks.json
+./install.sh --hooks-for /path/to/project
+```
+
 ---
 
 ## Prerequisites
@@ -109,16 +135,19 @@ first `docker compose up`.
 **Console scripts** (installed into pipx-managed bin, or
 `~/.local/bin` if pipx isn't available):
 
-- `sill` — top-level CLI (`sill seed import`, `sill db psql`,
-  `sill verify`; not all subcommands are wired yet).
+- `sill` — top-level CLI (`sill seed import`, `sill notice` — the mint
+  path, see below — `sill db psql`, `sill verify`; not all
+  subcommands are wired yet).
 - `sill-mcp` — the MCP server. Claude Code spawns this from
   `~/.claude/.mcp.json`.
 - `sill-worker` — the worker entry point used inside the Docker containers.
 
 **Plugin** (`plugin/`):
 
-- 10 hooks (recall, attribution checks, response patterns, etc.)
-- 7 generic response-pattern rule files
+- 12 hooks (recall, attribution checks, response patterns, a mint-path
+  auto-store, a shell-idiom guard, `/clear` handoff, etc. — see
+  `docs/hooks.md`)
+- 8 generic response-pattern rule files
 - `goodnight-triggers.txt` config
 - Templates for Claude Code and Codex hook wiring
 
@@ -155,6 +184,33 @@ project root, beat sessions dir, fake-embeddings test mode, …) see
 
 ---
 
+## The mint path
+
+Recall is the read side; `sill notice` is the write side. It stores
+one memory as a speech act — what it says, and who said it with what
+illocutionary force (`assertive`/`directive`/`commissive`/
+`expressive`/`declaration`; only `assertive` is truth-scored, the
+rest succeed by being complied-with, kept, sincere, or felicitous).
+`--speaker` is required — an unattributed mint is the store's main
+hygiene hole. `--receipt-to <file>` has the store itself splice the
+mint's receipt into a waiting placeholder line in a journal file,
+instead of you pasting the id back in by hand. For bundling several
+acts from one event into a single transaction, so they share one
+`created_at` as the bundle key, see
+`backend/scripts/decompose_event.py`. Full flag reference:
+
+```bash
+sill notice --help
+```
+
+This same path is what `response-patterns`' local-model insight
+detector calls to auto-store a novel insight (off by default — see
+`SILL_INSIGHT_DETECT` in `docs/extending.md`), which is also why
+v0.1.0's auto-store never actually stored anything: the CLI it shelled
+out to had no `notice` subcommand until this path was wired.
+
+---
+
 ## Adding hooks to a project
 
 If you want Sill's hooks to run in a specific project (recall on prompt
@@ -165,14 +221,21 @@ on Stop, etc.), point the installer at that project:
 ./install.sh --hooks-for /path/to/your/project
 ```
 
-This writes two idempotent files:
+This writes two files:
 
 - `/path/to/your/project/.codex/hooks.json` — rendered from
-  `plugin/codex.hooks.json.template`.
+  `plugin/codex.hooks.json.template`, but only if that file doesn't
+  already exist.
 - `/path/to/your/project/.claude/settings.local.json` — same hooks
   merged into the existing `hooks` block (created if absent).
 
-Re-running is safe; existing hooks are preserved.
+Re-running is safe on both sides, but only the Claude Code side is
+idempotent in the useful sense of also picking up new hooks — existing
+entries are preserved and Sill's are deduplicated, and a later Sill
+version's new hooks get merged in on the next run. The Codex side is
+all-or-nothing: once `.codex/hooks.json` exists, re-running
+`--hooks-for` leaves it exactly as it was. See "Hook upgrades and
+`--hooks-for`" under Upgrading above for the delete-and-re-render fix.
 
 ---
 
@@ -212,7 +275,7 @@ detects it on each call.
 - `docs/concepts.md` — what's in the database, memory shape rules,
   embedding dimension, recall patterns, workers, the AGE graph layer.
 - `docs/hooks.md` — one section per shipped hook (event, env vars,
-  how to disable).
+  how to disable, a canned test command).
 - `docs/extending.md` — writing good memories, the quality gate,
   adding your own hooks, customizing rule files and triggers,
   env-var cheat sheet.

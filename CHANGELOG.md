@@ -19,6 +19,38 @@ All notable changes to Sill are recorded here. Format loosely follows
 - **Guards** — archive-status invariant trigger (`archived_at` authoritative);
   connect phantom-node guard (`discover_relationship` refuses ids with no
   memories row).
+- **Mint path** — `sill notice` (force/speaker-tagged memory writes, required
+  `--speaker`), store-written receipts (`--receipt-to` splices a mint's
+  receipt into a waiting journal placeholder instead of the caller pasting
+  it back by hand), and `backend/scripts/decompose_event.py` (bundles every
+  speech act from one event into a single transaction so they share one
+  `created_at` as the bundle key).
+- **spontaneous-recall hook wiring** — the `[TIME]` header (built on
+  `session_activity` above) reporting wall-clock plus within-/across-session
+  gaps; a headless/detached-beat gate (`SILL_DETACHED_BEAT`,
+  `SILL_INTERACTIVE`, `SILL_HEADLESS_TOOL`) that silences recall for
+  non-interactive `--print` invocations; a recall sidecar so non-MCP recall
+  paths stay visible to reuse tracking; access telemetry; `src=` provenance
+  refs pointing at a memory's origin address in recall output.
+- **track-reuse provenance detector** — evidence-based reuse detection
+  sampled from a memory's body rather than its head (the head is what a
+  citation reproduces), three false-positive guards (body-only sampling,
+  reject a phrase shared by ≥2 recalled memories as a title not evidence,
+  zero a burst of more than 3 detections in one Stop event as a citation
+  sweep), and a sidecar reader so recall paths that bypass MCP tool_results
+  are still tracked.
+- **response-patterns fog closure** — a fail-closed `SILL_HOME_PROJECT` gate
+  (unset ⇒ every project reads as home ⇒ auto-store stays log-only);
+  deliberate-mint suppression so a session that already minted a row (MCP
+  `remember` or the CLI's `notice`/`decompose_event`) doesn't get an
+  unhedged auto-store echo of itself; a carry-forward sidecar that delivers
+  a Stop hook's warnings at the start of the next prompt; tagged,
+  force/speaker-stamped auto-store; comment-tolerant frontmatter parsing;
+  the `authorship-attribution` response-pattern rule.
+- **New hooks** — `shell-idiom-guard` (PreToolUse/Bash; denies the zsh
+  `echo =word` trap — the one hook in the suite that blocks rather than
+  advises); `clear-handoff` (SessionStart; re-injects the prior session's
+  final assistant message after `/clear`).
 
 ### Fixed
 
@@ -26,6 +58,12 @@ All notable changes to Sill are recorded here. Format loosely follows
   (encoding-safe `convert_to` replaces the escape-interpreting `::bytea` cast).
 - Access telemetry decoupled from importance (removed the compounding
   importance-on-access trigger path; `touch_memory_access` is pure telemetry).
+- v0.1.0's insight auto-store path was inert (the CLI had no `notice`
+  subcommand); now wired and covered by a contract test.
+
+### Changed
+
+- response-patterns no longer emits the discarded `reason` field.
 
 ### Removed
 
