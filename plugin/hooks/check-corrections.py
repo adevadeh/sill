@@ -16,7 +16,11 @@ STATE_FILE = _SILL_LOG_DIR / "verification-state.json"
 
 def reset_verification_state():
     """Clear verification state at start of each turn."""
-    STATE_FILE.write_text(json.dumps({"verified": False, "turn_start": datetime.now().isoformat()}))
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps({"verified": False, "turn_start": datetime.now().isoformat()}))
+    except Exception:
+        pass
 
 # Patterns that suggest the user is correcting or challenging something
 CORRECTION_PATTERNS = [
@@ -58,8 +62,12 @@ def log(message: str, triggered: bool, matched_pattern: str | None = None):
     preview = message[:80].replace('\n', ' ')
     pattern_info = f" [pattern: {matched_pattern}]" if matched_pattern else ""
     status = "TRIGGERED" if triggered else "checked"
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{timestamp} | {status}{pattern_info} | {preview}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} | {status}{pattern_info} | {preview}\n")
+    except Exception:
+        pass
 
 # Find which pattern matched (if any)
 matched = None

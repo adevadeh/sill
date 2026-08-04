@@ -289,7 +289,7 @@ order.
 
 | Var                    | Default                                | Purpose |
 |-------------------------|-----------------------------------------|---------|
-| `SILL_HOME_PROJECT`    | unset                                   | Names the one project the insight auto-store is meant to run in. **Fail-closed**: unset means every cwd — including a real project — reads as "home", so auto-store stays log-only everywhere until you configure this. |
+| `SILL_HOME_PROJECT`    | unset                                   | Names the one project where insight auto-store is **suppressed** — the project that mints deliberately, where an auto-store would only echo. Every other project is eligible. **Fail-closed**: unset means every resolvable cwd reads as home, so auto-store stays log-only everywhere until you configure this. |
 | `SILL_SPEAKER_SELF`    | `instance`                              | The `--speaker` value stamped on an auto-stored memory. Rename it once you've christened the running instance. |
 | `SILL_INSIGHT_DETECT`  | `0` (off)                               | `1` turns on the local-model insight detector. Leave off unless you have a model reachable at `SILL_OLLAMA_URL` — otherwise every Stop event pays a timeout for nothing. |
 | `SILL_CLI`             | `sill`                                  | The command the auto-store path shells out to (`$SILL_CLI notice ...`). Point it at a full path if `sill` isn't on the hook's PATH. |

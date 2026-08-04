@@ -321,12 +321,27 @@ The shipped rule set (`plugin/response-patterns/`):
 **When it fires:** `Stop`. Timeout: 45s.
 
 **The home-project gate (fail-closed).** `SILL_HOME_PROJECT` names the
-one project this auto-store is meant to run in — everywhere else reads
-as off-project and is eligible for auto-store. Leave it **unset** and
-the gate fails closed: every cwd (including a real basename you didn't
-expect) reads as home, so auto-store stays log-only everywhere rather
-than defaulting open onto an unreviewed project. This is deliberate —
-an unconfigured install should never silently start writing memories.
+one project where insight auto-store is **suppressed** — the project
+that mints deliberately (`sill notice` / MCP `remember`), where an
+auto-store would only echo something already recorded. Every other
+project is eligible for auto-store. Leave it **unset** and the gate
+fails closed the other way: every resolvable cwd (including a real
+basename you didn't expect) reads as home, so auto-store stays
+log-only *everywhere* until you configure this — an unconfigured
+install should never silently start writing memories. Check the real
+semantics yourself rather than trusting this paragraph:
+
+```bash
+SILL_HOME_PROJECT=/tmp/demo python3 -c "
+import importlib.util, pathlib
+p = pathlib.Path('plugin/hooks/response-patterns.py')
+s = importlib.util.spec_from_file_location('rp', p); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)
+print(m.source_project('/tmp/demo', None))     # -> home  (auto-store suppressed here)
+print(m.source_project('/tmp/other', None))    # -> other (eligible)
+"
+# -> home
+#    other
+```
 
 **Deliberate-mint suppression.** If this turn — or, whole-session, any
 earlier turn — already minted a memory via MCP `remember*` or the

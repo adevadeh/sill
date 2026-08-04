@@ -40,8 +40,12 @@ DB_PASS = os.environ.get("POSTGRES_PASSWORD", "sill_password")
 
 def log(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{timestamp} | {message}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} | {message}\n")
+    except Exception:
+        pass
 
 
 def get_db_connection():
@@ -371,10 +375,22 @@ def read_recall_sidecars(session_id: str, recent_window_minutes: int = 5) -> lis
     here (e.g. the spontaneous-recall hook's own memory injections).
 
     Each entry is {"ts", "source", "memories": [{"id","content"}, ...]}.
-    The per-session file (if a session id is given) is read in full; the
-    shared 'recent' file has no session boundary of its own, so it is time-
-    gated to the last `recent_window_minutes` minutes. Returns flattened
-    memory dicts with a pass-through "channel" field.
+    Both files are time-gated to the last `recent_window_minutes` minutes.
+
+    The per-session file is append-only and never truncated (spontaneous-
+    recall.py only ever opens it with mode "a"), so an unbounded read would
+    make the candidate set grow monotonically for the life of the session —
+    every UserPromptSubmit turn adds its recalled memories, and none ever
+    drop off. With BURST_LIMIT zeroing any batch of more than a few flagged
+    memories in one Stop event (guard-3, a citation-sweep guard), a long
+    session's ever-growing candidate pool makes that guard fire more often
+    the longer the session runs, purely from pool size — turning an
+    anti-citation-sweep guard into a session-length kill switch that
+    silently stops recording reuse. Time-gating both files the same way
+    caps the candidate pool by recency instead of by session boundary,
+    which is what BURST_LIMIT's "one Stop event" framing actually assumes:
+    a memory recalled hours ago is no more part of "what's live right now"
+    than one recalled in a different session entirely.
     """
     out = []
     seen_ids = set()
@@ -389,7 +405,7 @@ def read_recall_sidecars(session_id: str, recent_window_minutes: int = 5) -> lis
     candidate_paths = []
     sid = (session_id or "").strip()
     if sid:
-        candidate_paths.append((log_dir / f"recall-sidecar-{sid}.jsonl", False))
+        candidate_paths.append((log_dir / f"recall-sidecar-{sid}.jsonl", True))
     candidate_paths.append((log_dir / "recall-sidecar-recent.jsonl", True))
 
     for path, time_gated in candidate_paths:

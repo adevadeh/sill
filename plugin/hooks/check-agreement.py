@@ -35,8 +35,12 @@ AGREEMENT_PHRASES = [
 
 def log(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{timestamp} | {message}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} | {message}\n")
+    except Exception:
+        pass
 
 def was_verified() -> bool:
     """Check if verification happened this turn."""

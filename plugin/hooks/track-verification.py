@@ -16,13 +16,21 @@ LOG_FILE = _SILL_LOG_DIR / "agreement-hook.log"
 
 def log(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{timestamp} | {message}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} | {message}\n")
+    except Exception:
+        pass
 
 def mark_verified(tool_name: str):
     """Record that a verification tool was used."""
     state = {"verified": True, "tool": tool_name, "timestamp": datetime.now().isoformat()}
-    STATE_FILE.write_text(json.dumps(state))
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps(state))
+    except Exception:
+        pass
     log(f"VERIFIED via {tool_name}")
 
 try:

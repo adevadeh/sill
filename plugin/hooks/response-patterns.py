@@ -43,8 +43,12 @@ DATA_FILE = _SILL_LOG_DIR / "response-patterns-data.jsonl"  # For analysis
 
 def log(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{timestamp} | {message}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} | {message}\n")
+    except Exception:
+        pass
 
 
 def log_match(pattern_name: str, matched_text: str, response_snippet: str,
@@ -58,8 +62,12 @@ def log_match(pattern_name: str, matched_text: str, response_snippet: str,
         "session_id": session_id,
         "cwd": cwd,
     }
-    with open(DATA_FILE, "a") as f:
-        f.write(json.dumps(entry) + "\n")
+    try:
+        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(DATA_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:  # never break the hook over the data log
+        log(f"log_match failed: {e}")
 
 
 def carry_forward(warnings: list[str], session_id: str | None):
@@ -347,17 +355,27 @@ def source_project(cwd: str | None, transcript_path: str | None = None) -> str:
     When the Stop payload carries no cwd, derive from transcript_path:
     ~/.claude/projects/<munged-cwd>/<session>.jsonl encodes the session cwd
     with '/' replaced by '-', so compare against the home path munged the
-    same way.
+    same way. This branch must honor the same fail-closed rule as the cwd
+    branch below: an empty `home` means there is no configured project to
+    tell apart from "home", so it must not return a bare short name.
     """
     home = os.environ.get("SILL_HOME_PROJECT", "")
     if not cwd and transcript_path:
         munged = Path(transcript_path).parent.name
-        if home and munged == home.replace("/", "-"):
+        if home:
+            if munged == home.replace("/", "-"):
+                return HOME_PROJECT_NAME
+            if munged.startswith("-"):
+                # Best-effort short name: the last path segment survives
+                # munging unless it itself contains hyphens; still beats
+                # 'unknown'. Only taken when a home IS configured — see the
+                # fail-closed note above.
+                return munged.rsplit("-", 1)[-1] or "unknown"
+        elif munged.startswith("-"):
+            # No home configured: fail closed exactly like the cwd branch
+            # below does — every resolvable project reads as home rather
+            # than leaking a real project name through this fallback path.
             return HOME_PROJECT_NAME
-        if munged.startswith("-"):
-            # Best-effort short name: the last path segment survives munging
-            # unless it itself contains hyphens; still beats 'unknown'.
-            return munged.rsplit("-", 1)[-1] or "unknown"
     cwd = cwd or str(Path.cwd())
     if home and (cwd == home or cwd.startswith(home + "/")):
         return HOME_PROJECT_NAME

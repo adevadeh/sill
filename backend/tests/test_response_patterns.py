@@ -32,6 +32,27 @@ def test_empty_home_env_treats_everything_as_home(monkeypatch):
     assert rp.source_project("/anywhere/else", None) == rp.HOME_PROJECT_NAME
 
 
+def test_munged_transcript_fallback_is_fail_closed_when_home_unset(monkeypatch):
+    monkeypatch.delenv("SILL_HOME_PROJECT", raising=False)
+    got = rp.source_project(None, "/x/.claude/projects/-Users-x-code-someproj/abc.jsonl")
+    assert got == rp.HOME_PROJECT_NAME
+
+
+def test_munged_transcript_fallback_still_resolves_short_name_when_home_set(monkeypatch):
+    # Guard against the fix regressing the branch's actual purpose: with a
+    # home configured and the munged dir NOT matching it, a real project
+    # short name must still come through (this is what the branch exists for).
+    monkeypatch.setenv("SILL_HOME_PROJECT", "/Users/x/code/home-project")
+    got = rp.source_project(None, "/x/.claude/projects/-Users-x-code-someproj/abc.jsonl")
+    assert got == "someproj"
+
+
+def test_munged_transcript_fallback_matches_home(monkeypatch):
+    monkeypatch.setenv("SILL_HOME_PROJECT", "/Users/x/code/someproj")
+    got = rp.source_project(None, "/x/.claude/projects/-Users-x-code-someproj/abc.jsonl")
+    assert got == rp.HOME_PROJECT_NAME
+
+
 def test_deliberate_mint_detector_sees_bash_notice():
     block = {"type": "tool_use", "name": "Bash",
              "input": {"command": "sill notice 'a fact' --speaker Ada"}}

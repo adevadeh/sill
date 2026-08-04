@@ -43,12 +43,43 @@ def test_burst_limit_zeroes_citation_sweeps():
 
 
 def test_sidecar_reader_time_gates_recent_only(tmp_path, monkeypatch):
+    # Timezone-aware on purpose: `now` in read_recall_sidecars() is built via
+    # datetime.now(timezone.utc), so a naive "2000-01-01T00:00:00" fixture
+    # made `now - ts` raise TypeError (naive vs aware) — caught by the
+    # surrounding `except Exception: continue` — which excluded the stale
+    # entry for the wrong reason (any parse failure, not staleness) and left
+    # the actual `now - ts > window` comparison unexercised. This form goes
+    # through that comparison for real.
     monkeypatch.setenv("SILL_LOG_DIR", str(tmp_path))
     (tmp_path / "recall-sidecar-recent.jsonl").write_text(json.dumps(
-        {"ts": "2000-01-01T00:00:00", "source": "spontaneous-recall",
+        {"ts": "2000-01-01T00:00:00+00:00", "source": "spontaneous-recall",
          "memories": [{"id": "00000000-0000-0000-0000-000000000000",
                        "content": "stale entry"}]}) + "\n")
     assert tr.read_recall_sidecars(None) == []
+
+
+def test_sidecar_reader_time_gates_per_session_too(tmp_path, monkeypatch):
+    """The per-session file used to be read un-time-gated (time_gated=False),
+    so it grew monotonically for the life of a session — every recall turn
+    added memories that never dropped off, eventually tripping BURST_LIMIT
+    on pool size alone. A stale and a fresh entry in the SAME per-session
+    file confirm the fix filters by recency, not by dropping the
+    per-session file's contents wholesale."""
+    from datetime import datetime, timezone
+    monkeypatch.setenv("SILL_LOG_DIR", str(tmp_path))
+    fresh_ts = datetime.now(timezone.utc).isoformat()
+    lines = [
+        json.dumps({"ts": "2000-01-01T00:00:00+00:00", "source": "spontaneous-recall",
+                     "memories": [{"id": "00000000-0000-0000-0000-000000000000",
+                                   "content": "stale per-session entry"}]}),
+        json.dumps({"ts": fresh_ts, "source": "spontaneous-recall",
+                     "memories": [{"id": "11111111-1111-1111-1111-111111111111",
+                                   "content": "fresh per-session entry"}]}),
+    ]
+    (tmp_path / "recall-sidecar-sessA.jsonl").write_text("\n".join(lines) + "\n")
+    out = tr.read_recall_sidecars("sessA")
+    ids = {m["id"] for m in out}
+    assert ids == {"11111111-1111-1111-1111-111111111111"}
 
 
 def test_burst_limit_fires_alone_when_guard2_passes():
