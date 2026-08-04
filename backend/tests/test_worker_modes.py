@@ -19,6 +19,14 @@ def test_heartbeat_mode_is_gone_from_choices():
     assert "maintenance" in choices
 
 
+def test_beat_mode_is_present_in_choices():
+    src = WORKER.read_text()
+    m = re.search(r'"--mode".*?choices=\[(.*?)\]', src, re.S)
+    assert m, "could not find the --mode choices list"
+    choices = m.group(1)
+    assert "beat" in choices, "the beat mode is not wired into --mode choices"
+
+
 def test_compose_has_no_heartbeat_service():
     text = COMPOSE.read_text()
     assert "heartbeat_worker" not in text
