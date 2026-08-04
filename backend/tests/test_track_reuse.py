@@ -49,3 +49,15 @@ def test_sidecar_reader_time_gates_recent_only(tmp_path, monkeypatch):
          "memories": [{"id": "00000000-0000-0000-0000-000000000000",
                        "content": "stale entry"}]}) + "\n")
     assert tr.read_recall_sidecars(None) == []
+
+
+def test_burst_limit_fires_alone_when_guard2_passes():
+    """Guard 3 isolated (review addendum): unique first-window phrases pass
+    guard 2; volume alone trips the burst zeroing at n > BURST_LIMIT."""
+    def mem(i):
+        body = f"distinct{i} marker{i} phrase{i} continues onward here"
+        return _mem(f"m{i}", "h " * 6 + body)
+    resp3 = " ... ".join(f"distinct{i} marker{i} phrase{i}" for i in range(3))
+    assert len(tr.detect_reuse([mem(i) for i in range(3)], resp3.lower())) == 3
+    resp4 = " ... ".join(f"distinct{i} marker{i} phrase{i}" for i in range(4))
+    assert tr.detect_reuse([mem(i) for i in range(4)], resp4.lower()) == []
