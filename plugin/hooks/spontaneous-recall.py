@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Ported from agi-memory .claude/hooks/spontaneous-recall.py (2026-08-04).
 """
 Hook: Spontaneous memory recall on UserPromptSubmit.
 Queries sill (Postgres + pgvector) for relevant context before the agent responds.
@@ -19,7 +20,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-LOG_FILE = Path(os.environ.get("SILL_LOG_DIR", "/tmp")) / "spontaneous-recall.log"
+_SILL_LOG_DIR = Path(os.environ.get("SILL_LOG_DIR", "/tmp"))
+LOG_FILE = _SILL_LOG_DIR / "spontaneous-recall.log"
 MAX_MEMORIES = 5
 MAX_CONVERSATIONS = 2
 MIN_QUERY_LENGTH = 20  # Don't query for very short messages
@@ -130,10 +132,12 @@ def query_memories_vector(prompt: str, keywords: list[str] | None = None) -> lis
                round(importance::numeric, 2) as imp,
                created_at::text,
                source,
+               COALESCE(ref, ''),
                LEFT(content, 500)
         FROM (
             SELECT hr.memory_id, hr.content, hr.memory_type,
-                   hr.score, hr.source, m.importance, m.created_at
+                   hr.score, hr.source, m.importance, m.created_at,
+                   m.source_attribution->>'ref' AS ref
             FROM hybrid_recall('{escaped}', {MAX_MEMORIES}, 60) hr
             JOIN memories m ON hr.memory_id = m.id
         ) sub
@@ -148,10 +152,12 @@ def query_memories_vector(prompt: str, keywords: list[str] | None = None) -> lis
                round(importance::numeric, 2) as imp,
                created_at::text,
                source,
+               COALESCE(ref, ''),
                LEFT(content, 500)
         FROM (
             SELECT fr.memory_id, m.content, m.type as memory_type,
-                   fr.score, fr.source, m.importance, m.created_at
+                   fr.score, fr.source, m.importance, m.created_at,
+                   m.source_attribution->>'ref' AS ref
             FROM fast_recall('{escaped}', {MAX_MEMORIES * 3}) fr
             JOIN memories m ON fr.memory_id = m.id
             WHERE fr.score >= {FAST_MIN_SIMILARITY}
@@ -175,7 +181,7 @@ def query_memories_vector(prompt: str, keywords: list[str] | None = None) -> lis
         for line in result.stdout.strip().split('\n'):
             if line and '|||' in line:
                 parts = line.split('|||')
-                if len(parts) >= 7:
+                if len(parts) >= 8:
                     # content is last — rejoin in case it contained |||
                     memories.append({
                         'id': parts[0],
@@ -184,7 +190,8 @@ def query_memories_vector(prompt: str, keywords: list[str] | None = None) -> lis
                         'importance': parts[3],
                         'created_at': parts[4],
                         'source': parts[5],
-                        'content': '|||'.join(parts[6:])[:500],
+                        'ref': parts[6],
+                        'content': '|||'.join(parts[7:])[:500],
                     })
 
         return memories
@@ -355,7 +362,14 @@ def format_results(memories: list[dict], conversations: list[dict]) -> str:
             sim = mem.get('similarity', '?')
             imp = mem.get('importance', '?')
             mid = mem.get('id', '')[:8]
-            lines.append(f"  {i}. [{mem['type']}, sim={sim}, imp={imp}, id={mid}] {content}")
+            # The address, when the memory has one: a recalled paraphrase can
+            # drift from its source with every retelling, and re-reading the
+            # source is the only correction. Advice to open the file is
+            # worthless without the file, so hand it over here, ahead of the
+            # content.
+            ref = (mem.get('ref') or '').strip()
+            src = f" src={ref}" if ref else ""
+            lines.append(f"  {i}. [{mem['type']}, sim={sim}, imp={imp}, id={mid}{src}] {content}")
 
     if conversations:
         lines.append("[CONVERSATION HISTORY] Related past discussions:")
@@ -369,38 +383,247 @@ def format_results(memories: list[dict], conversations: list[dict]) -> str:
 
     return ""
 
+# ---------------------------------------------------------------------------
+# Time awareness (migration 002, session_activity table).
+# This is not continuity — regular context preservation handles that. It just
+# reports how much wall-clock has passed since the project was last worked on,
+# so a large gap can hint that something upstream may have changed since (a
+# dependency shipped a new release, a spec got revised, etc). Injected as
+# reference data to cite, not a cue to perform circadian affect.
+# ---------------------------------------------------------------------------
+def _humanize_gap(seconds: int) -> str:
+    """Precise, compact duration — better than '6d ago'."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    m, s = divmod(s, 60)
+    if m < 60:
+        return f"{m}m {s}s"
+    h, m = divmod(m, 60)
+    if h < 24:
+        return f"{h}h {m}m"
+    d, h = divmod(h, 24)
+    return f"{d}d {h}h"
+
+
+def track_session_time(session_id: str, project: str) -> dict | None:
+    """Upsert this exchange into session_activity; return the PRIOR row's timing.
+
+    One psql round-trip. The `prev` CTE reads the pre-upsert snapshot (Postgres CTEs
+    share one snapshot), so it yields the previous prompt's time and session before
+    `up` overwrites them. Returns None on any failure — never breaks the prompt.
+    """
+    if not session_id or not project:
+        return None
+    sid = session_id.replace("'", "''")
+    proj = project.replace("'", "''")
+    q = f"""
+    WITH prev AS (
+        SELECT session_id AS ps, last_prompt_at AS pt
+        FROM session_activity WHERE project = '{proj}'
+    ),
+    up AS (
+        INSERT INTO session_activity (project, session_id, last_prompt_at, session_started_at, prompt_count)
+        VALUES ('{proj}', '{sid}', now(), now(), 1)
+        ON CONFLICT (project) DO UPDATE SET
+            session_id = '{sid}',
+            last_prompt_at = now(),
+            session_started_at = CASE WHEN session_activity.session_id = '{sid}'
+                                      THEN session_activity.session_started_at ELSE now() END,
+            prompt_count = CASE WHEN session_activity.session_id = '{sid}'
+                                THEN session_activity.prompt_count + 1 ELSE 1 END
+        RETURNING prompt_count
+    )
+    SELECT COALESCE((SELECT ps FROM prev), ''),
+           COALESCE(EXTRACT(EPOCH FROM (now() - (SELECT pt FROM prev)))::bigint, -1),
+           (SELECT prompt_count FROM up);
+    """
+    try:
+        r = subprocess.run(
+            ['docker', 'exec', DB_CONTAINER, 'psql', '-U', DB_USER, '-d', DB_NAME,
+             '-t', '-A', '-F', '|||', '-c', q],
+            capture_output=True, text=True, timeout=8,
+        )
+        if r.returncode != 0:
+            return None
+        line = r.stdout.strip().split('\n')[0]
+        parts = line.split('|||')
+        if len(parts) < 3:
+            return None
+        return {"prev_session": parts[0], "gap_seconds": int(parts[1]), "count": int(parts[2])}
+    except Exception:
+        return None
+
+
+def build_time_header(session_id: str, project: str) -> str:
+    """A compact 1-line temporal header: wall-clock (for day/night legibility)
+    plus sequence/gap since the last exchange."""
+    now = datetime.now().astimezone()
+    clock = now.strftime("%a %Y-%m-%d %H:%M %Z")
+    info = track_session_time(session_id, project)
+    projname = os.path.basename(project.rstrip('/')) if project else "?"
+    if not info:
+        return f"[TIME] {clock}"
+    prev, gap, count = info["prev_session"], info["gap_seconds"], info["count"]
+    if not prev or gap < 0:
+        return f"[TIME] {clock} · first exchange recorded for {projname}."
+    if prev == session_id:
+        return f"[TIME] {clock} · msg #{count} this session · {_humanize_gap(gap)} since your last message."
+    # session_id changed → a new session (a "waking"): report the across-gap.
+    nudge = " — consider what may have changed upstream since." if gap >= 7200 else ""
+    return f"[TIME] {clock} · new session (msg #{count}) · last worked in {projname} {_humanize_gap(gap)} ago{nudge}"
+
+
 # Main execution
 try:
     input_data = json.load(sys.stdin)
 except json.JSONDecodeError:
     sys.exit(0)
 
-prompt = input_data.get("prompt", "")
-if not prompt or len(prompt) < MIN_QUERY_LENGTH:
-    # Too short to meaningfully query
+# `claude --print` (SDK/headless) invocations are non-conversational — no human
+# on the other end. They must not get recall injected into their prompt, nor
+# advance the interactive activity clock. Every `--print` fire — a scheduled
+# job, a spawned subagent, a batch script — reports an entrypoint in the "sdk"
+# family (e.g. "sdk-cli").
+#
+# So gate on the HEADLESS signal, not on a whitelist of interactive strings. A
+# whitelist ("== cli") is the wrong shape: it goes silently dark on every
+# front-end string it did not anticipate — including front-ends that don't
+# exist yet. Default to interactive; exclude only the known-headless family
+# (blacklist, not whitelist) — an unknown entrypoint is a human until proven
+# otherwise. Any new front-end (cli, desktop app, web, IDE extension, …) then
+# works automatically, with no list to update.
+#
+# The mirror case is a front-end that drives `--print` on behalf of a person
+# who really is there. It looks headless from here (--print, sdk-cli), so it
+# sets SILL_INTERACTIVE=1 to say "there is a human in this loop": it gets the
+# header and advances the clock like any interactive session. SILL_HEADLESS_TOOL
+# is the opposite override — an explicit "be quiet" that always wins.
+#
+# SILL_DETACHED_BEAT=1 is an authoritative headless flag a scheduler can set on
+# every child session it spawns, for exactly this classification — a stronger
+# signal than the entrypoint string, which a wrapping front-end could leave
+# unchanged. The entrypoint test stays as a second signal, but is never the only
+# lock — nor is the 2000-char recall length-gate below a lock at all: a short
+# prompt could otherwise switch injection on silently.
+_entrypoint = os.environ.get("CLAUDE_CODE_ENTRYPOINT", "cli")
+_interactive = bool(os.environ.get("SILL_INTERACTIVE"))
+_headless_entrypoint = _entrypoint.startswith("sdk")
+_detached_beat = bool(os.environ.get("SILL_DETACHED_BEAT"))
+if os.environ.get("SILL_HEADLESS_TOOL") or (
+        not _interactive and (_headless_entrypoint or _detached_beat)):
     sys.exit(0)
 
-# Skip for simple commands/greetings (must be the whole message, not just prefix)
+prompt = input_data.get("prompt", "")
+if not prompt.strip():
+    sys.exit(0)
+
+# A "System:"-tagged prompt is not a person talking — no header, no recall.
+if prompt.lstrip().startswith("System:"):
+    sys.exit(0)
+
+# Time header: advance the activity clock + compute deltas for EVERY genuine
+# prompt — including short ones like "yes" or "ok". The clock must not drift,
+# and the header should show even when there's nothing to recall (a short
+# message hitting the recall length-gate below should not also drop the
+# header). RECALL is gated separately below; the clock is not. Identity uses
+# CLAUDE_CODE_SESSION_ID (stable across the conversation, compaction
+# included), not the payload session_id (random for headless --print fires).
+def _stable_project(raw: str) -> str:
+    """Normalize to the git toplevel so project identity survives cwd drift.
+    The payload cwd follows the invoking shell (a `cd` into a subdirectory
+    mid-session can mint a phantom project row keyed on that subdirectory),
+    so prefer CLAUDE_PROJECT_DIR (the launch dir, immune to cd) and fold any
+    path inside a repo to the repo root."""
+    try:
+        r = subprocess.run(["git", "-C", raw, "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=3)
+        top = r.stdout.strip()
+        if r.returncode == 0 and top:
+            return top
+    except Exception:
+        pass
+    return raw
+
+
+_project = _stable_project(os.environ.get("CLAUDE_PROJECT_DIR")
+                           or input_data.get("cwd") or os.getcwd())
+_sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or input_data.get("session_id", "")
+time_header = build_time_header(_sid, _project)
+
+
+def _read_pattern_carry_forward(session_id: str) -> str:
+    """Read (and consume) last turn's response-pattern warnings for this session.
+
+    response-patterns.py is a Stop hook: it fires after the reply is already on
+    screen, so it cannot prevent anything. It stashes its warnings here; this
+    hook surfaces them at the top of the next turn, before any token is
+    generated. Deleted on read so a warning is delivered exactly once.
+    """
+    sid = (session_id or os.environ.get("CLAUDE_SESSION_ID", "")).strip()
+    if not sid:
+        return ""
+    path = _SILL_LOG_DIR / f"response-patterns-last-{sid}.json"
+    if not path.exists():
+        return ""
+    try:
+        data = json.loads(path.read_text())
+        path.unlink(missing_ok=True)
+    except Exception:
+        return ""
+    warnings = data.get("warnings") or []
+    if not warnings:
+        return ""
+    body = "\n\n".join(warnings)
+    return (
+        "[PATTERN CHECK — your PREVIOUS reply tripped these. Apply now, before "
+        "writing. Do not apologize for the earlier slip or perform a correction; "
+        "just do not repeat it in this reply.]\n" + body
+    )
+
+
+# Read once, here: this is the only point both exit paths pass through, and the
+# read consumes the sidecar. A short prompt takes _emit_header_and_exit() and
+# would otherwise drop the flag — which is precisely the prose-only turn where no
+# PreToolUse/PostToolUse hook fires and nothing else can reach the agent in time.
+_pattern_flag = _read_pattern_carry_forward(_sid)
+
+
+def _emit_header_and_exit():
+    """Show the time header even when memory recall is skipped (short/greeting/thin)."""
+    parts = [p for p in (_pattern_flag, time_header) if p]
+    if parts:
+        print(json.dumps({
+            "systemMessage": time_header,
+            "hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                   "additionalContext": "\n\n".join(parts)},
+        }))
+    sys.exit(0)
+
+
+# --- Recall gates: from here down only decide whether to ALSO do memory recall;
+#     the time header has already fired, so a skip still shows it. ---
+
+# Too short to query, or so long the embedding would time out (e.g. a big paste).
+if len(prompt) < MIN_QUERY_LENGTH or len(prompt) > 2000:
+    _emit_header_and_exit()
+
+# A bare greeting/acknowledgement (whole message, not just prefix).
 simple_patterns = [
     r'^(hi|hello|hey|good morning|good night|thanks|bye|ok|okay)[!.,]?$',
     r'^(yes|no|sure|right|got it)[!.,]?$',
     r'^\s*$',
 ]
 if any(re.match(p, prompt.lower().strip()) for p in simple_patterns):
-    sys.exit(0)
-
-# Skip system prompts and very long messages (e.g. from chorus/salon beats)
-# These generate embeddings that timeout and return irrelevant results
-if prompt.lstrip().startswith("System:") or len(prompt) > 2000:
-    sys.exit(0)
+    _emit_header_and_exit()
 
 # Extract keywords and check topical threshold (Lever 1)
 keywords = extract_keywords(prompt)
 log(f"Keywords ({len(keywords)}): {keywords}")
 
 if len(keywords) < MIN_TOPICAL_KEYWORDS:
-    log(f"Skipping: only {len(keywords)} topical keywords (need {MIN_TOPICAL_KEYWORDS})")
-    sys.exit(0)
+    log(f"Skipping recall: only {len(keywords)} topical keywords (need {MIN_TOPICAL_KEYWORDS})")
+    _emit_header_and_exit()
 
 # Query both sources
 log(f"Query for: {prompt[:100]}...")
@@ -413,12 +636,77 @@ log(f"Found {len(memories)} memories")
 conversations = search_episodic_memory(prompt)
 log(f"Found {len(conversations)} conversations")
 
-# Output if anything found
-if memories or conversations:
+# Write surfaced-memory-IDs to the reuse-tracking sidecar so a Stop hook can
+# detect reuse on this recall path (which produces no MCP tool call to scan).
+# Session-keyed when CLAUDE_SESSION_ID env is set; falls back to a 'recent' file.
+def _write_recall_sidecar(memories_list, session_id):
+    if not memories_list:
+        return
+    try:
+        from datetime import datetime, timezone
+        sid = (session_id or os.environ.get("CLAUDE_SESSION_ID", "")).strip()
+        path = _SILL_LOG_DIR / (f"recall-sidecar-{sid}.jsonl" if sid else "recall-sidecar-recent.jsonl")
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "source": "spontaneous-recall",
+            "memories": [
+                {"id": str(m.get("id", "")), "content": (m.get("content") or "")[:400]}
+                for m in memories_list if m.get("id")
+            ],
+        }
+        if not entry["memories"]:
+            return
+        with open(path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
+def _touch_access(memories_list):
+    """Record only memories emitted into this prompt's model-visible context."""
+    ids = list(dict.fromkeys(
+        str(memory.get("id", ""))
+        for memory in memories_list
+        if re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+            r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            str(memory.get("id", "")),
+        )
+    ))
+    if not ids:
+        return
+    idlist = ",".join(f"'{memory_id}'::uuid" for memory_id in ids)
+    query = (
+        "UPDATE memories "
+        "SET access_count = access_count + 1, last_accessed = CURRENT_TIMESTAMP "
+        f"WHERE id IN ({idlist});"
+    )
+    try:
+        result = subprocess.run(
+            ["docker", "exec", DB_CONTAINER, "psql", "-U", DB_USER, "-d", DB_NAME,
+             "-q", "-c", query],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            log(f"Access tracking failed: {result.stderr.strip()}")
+    except Exception as exc:
+        log(f"Access tracking failed: {type(exc).__name__}: {exc}")
+
+
+_touch_access(memories)
+_write_recall_sidecar(memories, input_data.get("session_id", ""))
+
+# Output if anything found (or we at least have a time header to inject)
+if memories or conversations or time_header:
     context = format_results(memories, conversations)
+    # Prepend the temporal header so it frames the recalled memories.
+    if time_header:
+        context = f"{time_header}\n\n{context}" if context else time_header
 
     # Build detailed summary for TUI
-    tui_lines = ["[sill] Recalled:"]
+    tui_lines = [time_header] if time_header else []
+    if memories or conversations:
+        tui_lines.append("[sill] Recalled:")
 
     if memories:
         for mem in memories:
@@ -463,6 +751,11 @@ if memories or conversations:
             tui_lines.append(f"  conv ({date}) {snippet}")
 
     system_msg = "\n".join(tui_lines)
+
+    # Carry forward last turn's response-pattern warnings (read+consumed above,
+    # so both exit paths deliver it exactly once).
+    if _pattern_flag:
+        context = _pattern_flag + "\n\n" + context
 
     # JSON output: systemMessage for TUI, additionalContext for the agent
     output = {
