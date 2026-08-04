@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
+# Ported from agi-memory .claude/hooks/track-reuse.py (2026-08-04).
 """
 Reuse tracking hook: Detect when hydrated memories appear in responses.
 
-Triggers on Stop event. Checks if memory IDs from recall/hydrate appear
-in the response text, and calls touch_memory_reuse() for matches.
+Triggers on Stop event. Checks if memory IDs or body phrases from recalled
+memories appear in the response text, and calls record_memory_reuse() for
+matches that survive the guards below.
 
-This provides a "value signal" - memories that get reused are more valuable
-than those that are just accessed but never referenced.
+This provides lexical-use telemetry, not a value verdict. Each accepted
+detection is recorded append-only (migration 006) with its detector
+version, evidence, session, and the memory's force/speaker; reuse_count
+remains a compatibility aggregate.
 """
 import json
 import os
@@ -257,36 +261,102 @@ def parse_tool_result(result_content):
     return None
 
 
-def check_memory_in_response(memory: dict, response: str) -> bool:
-    """Check if a memory appears to be referenced in the response."""
+# Three guards against false-positive reuse detection. A detector that samples
+# phrases from the content HEAD is exactly what a citation, or a near-twin
+# memory's shared framing, reproduces — so merely quoting a memory (rather
+# than reusing it) would stamp it "reused," and near-twins would co-fire on
+# text they share by construction, not by either one being used.
+HEAD_SKIP_WORDS = 6   # the head of a memory is what a citation reproduces;
+                      # sample evidence from the body instead.
+BURST_LIMIT = 3       # more than this many stamps in one Stop event is a
+                      # citation sweep, not that many genuine reuse events —
+                      # stamp nothing.
+DETECTOR_VERSION = "track-reuse/body-v2+guards/events-v1"
+
+
+def find_reuse_phrase(memory: dict, response: str):
+    """Return evidence that a memory was reused: "__ID__" for an id mention, a
+    matched BODY phrase, or None. Guard 1: phrases are sampled from beyond the
+    first HEAD_SKIP_WORDS words only — a memory too short to have a body yields
+    no phrase evidence (id mention still counts)."""
     mem_id = memory.get("id", "")
     content = memory.get("content", "")
 
-    # Check if memory ID is mentioned (unlikely but possible)
     if mem_id and mem_id in response:
-        return True
+        return "__ID__"
 
-    # Check if significant content phrases appear
-    # Look for 3+ word phrases from the memory content
     if content:
-        # Extract words, look for matching phrases
         words = content.split()
-        if len(words) >= 3:
-            # Check a few key phrases
-            for i in range(0, min(len(words) - 2, 10)):
+        start = HEAD_SKIP_WORDS
+        if len(words) - start >= 3:
+            response_lower = response.lower()
+            for i in range(start, min(len(words) - 2, start + 20)):
                 phrase = " ".join(words[i : i + 3])
-                # Skip very common phrases
-                if len(phrase) > 15 and phrase.lower() in response.lower():
-                    return True
+                # Skip very common/short phrases
+                if len(phrase) > 15 and phrase.lower() in response_lower:
+                    return phrase
 
-    return False
+    return None
 
 
-def touch_memory_reuse(conn, memory_id: str):
-    """Mark a memory as reused."""
+def detect_reuse(memories: list[dict], response_lower: str) -> list[tuple[str, str, str]]:
+    """Pure guard pipeline over an already-recalled memory list and an
+    already-lowercased response: sample evidence per memory (guard 1, inside
+    find_reuse_phrase), reject phrases that are a title rather than evidence
+    (guard 2), then zero the whole batch if it looks like a citation sweep
+    (guard 3). Returns (memory_id, evidence, channel) tuples for reuse that
+    survived every guard.
+    """
+    candidates = []
+    for mem in memories:
+        evidence = find_reuse_phrase(mem, response_lower)
+        if evidence:
+            candidates.append((mem, evidence))
+
+    def _phrase_owner_count(phrase: str) -> int:
+        # A phrase shared by two memories is a title, not evidence — a
+        # near-twin's boilerplate framing must not co-fire as "used."
+        p = phrase.lower()
+        return sum(1 for m in memories if p in (m.get("content") or "").lower())
+
+    reused = []
+    for mem, evidence in candidates:
+        if evidence != "__ID__" and _phrase_owner_count(evidence) >= 2:
+            log(f"Guard-2 reject: phrase {evidence!r} shared by >=2 recalled memories ({str(mem.get('id', ''))[:8]})")
+            continue
+        reused.append((mem["id"], evidence, mem.get("channel") or "mcp-tool-result"))
+
+    if len(reused) > BURST_LIMIT:
+        log(f"Guard-3 burst: {len(reused)} memories flagged in one Stop event — citation sweep, stamping nothing")
+        reused = []
+
+    return reused
+
+
+def _evidence_kind(evidence: str) -> str:
+    return "memory_id" if evidence == "__ID__" else "body_phrase"
+
+
+def touch_memory_reuse(conn, memory_id: str, evidence: str, session_id: str,
+                        channel: str = "mcp-tool-result") -> bool:
+    """Record one guard-approved lexical reuse observation.
+
+    channel = how the memory arrived in context (spontaneous-recall,
+    mcp-tool-result, or any other sidecar-reported source), persisted into
+    metadata so usage telemetry can be partitioned by arrival channel."""
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT touch_memory_reuse(%s::uuid)", (memory_id,))
+            cur.execute(
+                "SELECT record_memory_reuse(%s::uuid, %s, %s, %s, %s, %s::jsonb)",
+                (
+                    memory_id,
+                    DETECTOR_VERSION,
+                    _evidence_kind(evidence),
+                    None if evidence == "__ID__" else evidence,
+                    session_id or None,
+                    json.dumps({"channel": channel}),
+                ),
+            )
             conn.commit()
             return True
     except Exception as e:
@@ -295,42 +365,119 @@ def touch_memory_reuse(conn, memory_id: str):
         return False
 
 
-# Main execution
-try:
-    input_data = json.load(sys.stdin)
-except json.JSONDecodeError:
+def read_recall_sidecars(session_id: str, recent_window_minutes: int = 5) -> list[dict]:
+    """Read the per-session and 'recent' sidecar files written by recall
+    channels that bypass MCP tool_results and so would otherwise be invisible
+    here (e.g. the spontaneous-recall hook's own memory injections).
+
+    Each entry is {"ts", "source", "memories": [{"id","content"}, ...]}.
+    The per-session file (if a session id is given) is read in full; the
+    shared 'recent' file has no session boundary of its own, so it is time-
+    gated to the last `recent_window_minutes` minutes. Returns flattened
+    memory dicts with a pass-through "channel" field.
+    """
+    out = []
+    seen_ids = set()
+    try:
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        window = timedelta(minutes=recent_window_minutes)
+    except Exception:
+        return out
+
+    log_dir = Path(os.environ.get("SILL_LOG_DIR", "/tmp"))
+    candidate_paths = []
+    sid = (session_id or "").strip()
+    if sid:
+        candidate_paths.append((log_dir / f"recall-sidecar-{sid}.jsonl", False))
+    candidate_paths.append((log_dir / "recall-sidecar-recent.jsonl", True))
+
+    for path, time_gated in candidate_paths:
+        if not path.exists():
+            continue
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if time_gated:
+                        try:
+                            ts = datetime.fromisoformat(entry.get("ts", "").replace("Z", "+00:00"))
+                            if now - ts > window:
+                                continue
+                        except Exception:
+                            continue
+                    for m in entry.get("memories", []) or []:
+                        mid = m.get("id", "")
+                        if not mid or mid in seen_ids:
+                            continue
+                        seen_ids.add(mid)
+                        # Carry the arrival channel through to the stamp — the
+                        # sidecar knows its own source; losing it here would
+                        # leave every reuse event channel-less.
+                        out.append({"id": mid, "content": m.get("content", ""),
+                                    "channel": entry.get("source") or "sidecar"})
+        except Exception:
+            continue
+    return out
+
+
+def main():
+    try:
+        input_data = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        sys.exit(0)
+
+    # Unconditional fire-trace so we can confirm the hook runs at all in production.
+    log(f"hook invoked, transcript_path={input_data.get('transcript_path', 'MISSING')}")
+
+    response_text = get_response_text(input_data)
+    recalled_memories = get_recalled_memories(input_data)
+    session_id = input_data.get("session_id", "")
+
+    # Merge in sidecar-surfaced memories (recall paths with no MCP tool call
+    # for this hook to scan) without duplicating anything already found via
+    # MCP tool_results.
+    sidecar_memories = read_recall_sidecars(session_id)
+    if sidecar_memories:
+        log(f"Sidecar surfaced {len(sidecar_memories)} memories (beyond MCP tool_results)")
+        existing_ids = {m.get("id", "") for m in recalled_memories}
+        for m in sidecar_memories:
+            if m["id"] not in existing_ids:
+                recalled_memories.append(m)
+
+    log(f"response_text len={len(response_text)}, recalled_memories n={len(recalled_memories)}")
+
+    if not response_text or not recalled_memories:
+        sys.exit(0)
+
+    log(f"Checking {len(recalled_memories)} recalled memories for reuse")
+
+    reused = detect_reuse(recalled_memories, response_text.lower())
+
+    if reused:
+        log(f"Found {len(reused)} reused memories")
+
+        # Update database. No docker fallback: if psycopg2 is unavailable or
+        # the connection fails, get_db_connection() has already logged why,
+        # and reuse tracking is skipped for this Stop event rather than
+        # crashing it.
+        conn = get_db_connection()
+        if conn:
+            for mem_id, evidence, channel in reused:
+                if touch_memory_reuse(conn, mem_id, evidence, session_id, channel):
+                    log(f"Recorded reuse: {mem_id} ({_evidence_kind(evidence)}, via {channel})")
+            conn.close()
+    else:
+        log("No memories reused in response")
+
     sys.exit(0)
 
-# Unconditional fire-trace so we can confirm the hook runs at all in production.
-log(f"hook invoked, transcript_path={input_data.get('transcript_path', 'MISSING')}")
 
-response_text = get_response_text(input_data)
-recalled_memories = get_recalled_memories(input_data)
-
-log(f"response_text len={len(response_text)}, recalled_memories n={len(recalled_memories)}")
-
-if not response_text or not recalled_memories:
-    sys.exit(0)
-
-log(f"Checking {len(recalled_memories)} recalled memories for reuse")
-
-# Check each memory for reuse
-reused = []
-for mem in recalled_memories:
-    if check_memory_in_response(mem, response_text):
-        reused.append(mem["id"])
-
-if reused:
-    log(f"Found {len(reused)} reused memories")
-
-    # Update database
-    conn = get_db_connection()
-    if conn:
-        for mem_id in reused:
-            if touch_memory_reuse(conn, mem_id):
-                log(f"Marked as reused: {mem_id}")
-        conn.close()
-else:
-    log("No memories reused in response")
-
-sys.exit(0)
+if __name__ == "__main__":
+    main()
