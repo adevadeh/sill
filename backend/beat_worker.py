@@ -376,12 +376,22 @@ def spawn_beat(voice: Voice) -> tuple[bool, float, str]:
     transcripts_dir = PROJECT_ROOT / voice.transcripts
 
     # Fix: read the standing prompt defensively. Reading it outside a try
-    # block (as upstream did) means a missing prompt file raises through
-    # the whole loop and kills the process — under a keep-alive supervisor
-    # that becomes a restart storm, not a single skipped beat.
+    # block (as upstream did) means a missing OR malformed prompt file
+    # raises through the whole loop and kills the process — under a
+    # keep-alive supervisor that becomes a restart storm, not a single
+    # skipped beat. Path.read_text() raises OSError for a missing/unreadable
+    # file, but UnicodeDecodeError — a ValueError, NOT an OSError subclass —
+    # for a file that exists but holds bytes invalid for the codec, so the
+    # `except OSError` guard alone let that second case straight through.
+    # Widened to catch both rather than reading bytes and decoding with
+    # errors="replace": this file's whole design is "on defect, skip and
+    # retry" (see read_state()'s docstring above), not "proceed with
+    # degraded input" — a garbled prompt handed to a live agent CLI could
+    # produce a nonsense beat that still exits 0 and gets recorded as a
+    # success.
     try:
         standing_prompt = prompt_path.read_text()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         logger.error(
             f"[{voice.name}] Could not read standing prompt {prompt_path}: {exc}. "
             "Skipping this beat without advancing rotation."
@@ -391,7 +401,21 @@ def spawn_beat(voice: Voice) -> tuple[bool, float, str]:
     before = snapshot_outputs(PROJECT_ROOT, voice.output_glob) if voice.output_glob else set()
     prompt = f"{standing_prompt}\n\n---\n\n{voice.kickoff}\n"
 
-    transcripts_dir.mkdir(parents=True, exist_ok=True)
+    # Fix: same class of risk as the prompt read above — this call sat
+    # outside any try/except (a gap upstream's spawn_gnomon_beat also has,
+    # so guarding it here is a deliberate improvement over the port source,
+    # not a port defect). An unwritable transcripts path, or one occupied by
+    # a same-named file, raises straight out of the loop the same way the
+    # previously-ungated prompt read used to.
+    try:
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        logger.error(
+            f"[{voice.name}] Could not create transcripts dir {transcripts_dir}: {exc}. "
+            "Skipping this beat without advancing rotation."
+        )
+        return False, 0.0, ""
+
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     transcript_path = transcripts_dir / f"{timestamp}.txt"
 

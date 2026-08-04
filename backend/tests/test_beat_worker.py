@@ -97,3 +97,34 @@ def test_produced_output_detects_a_new_file(tmp_path):
 def test_produced_output_is_true_when_voice_declares_no_glob(tmp_path):
     """A voice with no output_glob cannot be verified; do not claim failure."""
     assert bw.produced_output(tmp_path, None, set()) is True
+
+
+@pytest.mark.parametrize("mode", ["malformed-bytes", "missing-file"])
+def test_spawn_beat_survives_unreadable_prompt(tmp_path, monkeypatch, mode):
+    """spawn_beat() must return rather than raise for both failure classes a
+    defensive prompt read has to cover: a missing file (OSError) and a file
+    that exists but holds bytes invalid for the codec (UnicodeDecodeError —
+    a ValueError, not an OSError subclass, so a bare `except OSError` lets
+    it straight through uncaught). Calling spawn_beat directly here still
+    respects this file's "no subprocess spawning" design: a prompt-read
+    failure returns before the function ever reaches subprocess.run()."""
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    prompt_path = tmp_path / "prompts" / "voice.md"
+    prompt_path.parent.mkdir(parents=True)
+    if mode == "malformed-bytes":
+        prompt_path.write_bytes(b"\xff\xfe not utf8")
+    # else "missing-file": leave prompt_path un-created
+
+    voice = bw.Voice(
+        name="analyst", prompt="prompts/voice.md",
+        transcripts="logs/analyst", output_glob=None, kickoff="Begin.",
+    )
+    success, duration, transcript_path = bw.spawn_beat(voice)
+    assert success is False
+    assert duration == 0.0
+    assert transcript_path == ""
+
+    state_path = tmp_path / "state.json"
+    bw.write_state(state_path, 0)
+    bw.advance_if(state_path, index=0, n_voices=2, success=success)
+    assert bw.read_state(state_path) == 0          # rotation must not advance
