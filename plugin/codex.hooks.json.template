@@ -20,6 +20,17 @@
             "statusMessage": "Checking state-language claims"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/shell-idiom-guard.py",
+            "statusMessage": "Checking shell command for idiom traps",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -48,6 +59,18 @@
             "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/track-reuse.py",
             "statusMessage": "Checking memory reuse",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/clear-handoff.py",
+            "statusMessage": "Restoring /clear handoff context",
+            "timeout": 10
           }
         ]
       }
