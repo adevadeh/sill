@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Attribution-check hook (hook 6 operationalized, beat 069 scope).
+Attribution-check hook.
 
 Fires PreToolUse on memory-storage tool calls (mcp__sill__remember,
 mcp__sill__remember_batch, Bash-with-sill.py-notice). Detects two drift
@@ -14,7 +14,7 @@ classes:
       said, your quote, I concluded, etc.). Non-verifying — flags for
       manual check before storage.
 
-Non-blocking. Emits systemMessage for William's TUI and logs every fire
+Non-blocking. Emits systemMessage for the operator's TUI and logs every fire
 to /tmp/attribution-check.log.
 """
 import json

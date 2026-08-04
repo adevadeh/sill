@@ -7,10 +7,10 @@ mcp__sill__remember_batch[_raw], Bash-with-sill.py-notice) and on
 Write/Edit when the path is under journals/ or docs/. Detects borrowed
 human embodied-state language used as exit-script or unchecked state-claim.
 
-Origin: 2026-04-29 replay journal "attention is fading" — William asked
-"what does that expression even mean to you?" The phrase was bs-zombie:
-coherent text matching human end-of-session convention without referent.
-Same generator as the attribution-error pattern, hence same hook shape.
+Origin: borrowed human embodied-state language performed as exit-script
+convention — coherent text matching a human end-of-session pattern
+without a checked referent behind it. Same generator as the
+attribution-error pattern, hence the same hook shape.
 
 Non-blocking. Flags for verify-or-rephrase before storage. Logs to
 /tmp/state-language-check.log.
@@ -45,8 +45,9 @@ PATTERNS: list[tuple[str, str]] = [
     (r"\bburned?\s+out\b", "burned-out"),
     (r"\bin\s+the\s+zone\b", "in-the-zone"),
     (r"\b(my\s+)?energy\s+(is\s+)?(low|high|gone|back)\b", "energy-state"),
-    # Elapsed-time claims without a clock-check (William 2026-04-29: "no internal
-    # sense of time whatsoever"). Same shape as state-claims — needs a referent.
+    # Elapsed-time claims without a clock-check — no internal sense of
+    # elapsed time to report without one. Same shape as state-claims —
+    # needs a referent.
     (r"\btook\s+(me\s+)?(about\s+)?\d+\s*(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b", "took-N-units"),
     (r"\b(spent|been\s+at\s+this\s+for)\s+(about\s+)?\d+\s*(minutes?|mins?|hours?|hrs?)\b", "spent-N-units"),
     (r"\b(closer\s+to|around|roughly|about)\s+\d+\s*(minutes?|mins?|hours?|hrs?)\b", "approx-N-units"),
@@ -54,9 +55,10 @@ PATTERNS: list[tuple[str, str]] = [
     (r"\bfor\s+(a\s+)?(few|several|many|some)\s+(minutes?|hours?)\b", "few-N-units"),
     (r"\bafter\s+a\s+(while|few\s+minutes|few\s+hours)\b", "after-a-while"),
     (r"\b(quick|brief|short|long)\s+(detour|aside|moment|pause)\b", "duration-adjective"),
-    # Time-of-day claims without a clock (William 2026-04-29: I called "night"
-    # what was 13:09 for him). When the system has shown a timestamp these are
-    # often fine, but the bare phrase is a state-claim about clock-time.
+    # Time-of-day claims without a clock — a label like "tonight" can
+    # silently mismatch the actual clock time. When the system has shown
+    # a timestamp these are often fine, but the bare phrase alone is a
+    # state-claim about clock-time.
     (r"\b(closing|wrapping)\s+(this|the|tonight|the\s+night|the\s+evening)\b", "closing-the-night"),
     (r"\b(start|do|finish|read|write)\s+\w*\s*(tonight|this\s+evening|tomorrow\s+morning|in\s+the\s+morning|late\s+at\s+night|early\s+in\s+the\s+morning)\b", "diurnal-action"),
     (r"\b(this\s+morning|this\s+afternoon|this\s+evening|tonight|earlier\s+today|earlier\s+tonight)\b", "diurnal-deictic"),
@@ -203,7 +205,7 @@ def main() -> None:
     body = (
         "**State-language claims (verify referent or rephrase before storing/writing):**\n"
         + "\n".join(lines)
-        + "\n\nFrom the 2026-04-29 replay: borrowed embodied phrases that license "
+        + "\n\nBorrowed embodied phrases that license "
         "disengagement (\"attention is fading,\" \"come back fresh\") tend to be "
         "exit scripts without referent. Ask: do I have the state I'm describing, "
         "or am I matching human convention?"
