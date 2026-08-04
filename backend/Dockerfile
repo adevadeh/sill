@@ -47,5 +47,11 @@ RUN rm -rf /tmp/* && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Run schema/init on first database startup.
-COPY schema.sql /docker-entrypoint-initdb.d/init.sql
+# First-boot initialization. initdb executes *.sql in sorted filename order:
+# 000_schema.sql (the frozen v0.1.0 baseline), then migrations 001..NNN, then
+# zzz_initdb_stamp.sql records the resulting schema level. Fresh installs and
+# upgraded installs therefore converge on the same schema (CI proves it).
+COPY schema.sql /docker-entrypoint-initdb.d/000_schema.sql
+COPY migrations/ /app/migrations/
+COPY init-migrations.sh /docker-entrypoint-initdb.d/001-run-migrations.sh
+RUN chmod +x /docker-entrypoint-initdb.d/001-run-migrations.sh
