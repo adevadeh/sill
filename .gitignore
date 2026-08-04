@@ -42,3 +42,6 @@ logs/
 .coverage
 htmlcov/
 .tox/
+
+# upgrade.sh pre-upgrade backups
+backups/
