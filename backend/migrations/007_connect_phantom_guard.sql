@@ -13,8 +13,6 @@
 -- edge property map is interpolated into cypher text, and free text there is
 -- an injection surface.
 
-BEGIN;
-
 CREATE OR REPLACE FUNCTION public.discover_relationship(
     p_from_id uuid,
     p_to_id uuid,
@@ -61,5 +59,3 @@ BEGIN
     );
 END;
 $function$;
-
-COMMIT;

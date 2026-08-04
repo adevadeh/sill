@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_reuse_events_detector_time
     ON memory_reuse_events(detector_version, detected_at DESC);
 
 COMMENT ON TABLE memory_reuse_events IS
-    'Append-only lexical reuse-detector observations. Not a semantic-use or value verdict; see docs/memory-addressing.md.';
+    'Append-only lexical reuse-detector observations. Not a semantic-use or value verdict.';
 
 COMMENT ON COLUMN memory_reuse_events.memory_force IS
     'Snapshot of memories.force at detection time, so usage telemetry can be grouped by speech-act force.';

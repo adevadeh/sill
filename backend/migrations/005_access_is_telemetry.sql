@@ -8,8 +8,6 @@
 -- with the explicit update_memory_importance(uuid, float, text) used by
 -- deliberate curation.
 
-BEGIN;
-
 DROP TRIGGER IF EXISTS trg_importance_on_access ON memories;
 DROP FUNCTION IF EXISTS public.update_memory_importance();
 
@@ -25,5 +23,3 @@ $$ LANGUAGE plpgsql;
 
 COMMENT ON COLUMN memories.access_count IS
     'Telemetry: number of times memory content was exposed to a model-visible context; does not alter importance.';
-
-COMMIT;

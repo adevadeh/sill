@@ -5,16 +5,13 @@
 -- only `status` (recall filters m.status = 'active'), while supersede and
 -- review paths historically wrote only `archived_at` + `archive_reason`.
 -- Nothing enforced agreement, so a memory could be archived on paper and
--- still surface in recall — the source house found hundreds of such rows,
--- some outranking their legitimate neighbours. This trigger makes
+-- still surface in recall, sometimes ranking above legitimate results. This trigger makes
 -- `archived_at` authoritative: setting it retires the memory, clearing it
 -- revives. Writers may keep using either column.
 --
 -- ROLLBACK:
 --   DROP TRIGGER IF EXISTS trg_archive_status_sync ON memories;
 --   DROP FUNCTION IF EXISTS sync_archive_status();
-
-BEGIN;
 
 CREATE OR REPLACE FUNCTION sync_archive_status() RETURNS trigger AS $$
 BEGIN
@@ -33,5 +30,3 @@ DROP TRIGGER IF EXISTS trg_archive_status_sync ON memories;
 CREATE TRIGGER trg_archive_status_sync
     BEFORE INSERT OR UPDATE OF archived_at, status ON memories
     FOR EACH ROW EXECUTE FUNCTION sync_archive_status();
-
-COMMIT;
