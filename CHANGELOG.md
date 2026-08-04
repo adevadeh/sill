@@ -67,6 +67,8 @@ All notable changes to Sill are recorded here. Format loosely follows
 
 ### Removed
 
+- The legacy heartbeat worker and its Compose profile. Reflection without a
+  reader goes stale; the beat worker replaces it.
 - Internal `.history/` scratch migrations from the v0.1.0 extraction
   (house-internal drafts; never executed at runtime). The shipped image now
   contains only the baseline schema and the numbered migrations.

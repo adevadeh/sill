@@ -2,18 +2,12 @@
 """
 AGI Workers
 
-This module contains two independent background loops:
-
-1) Heartbeat worker (conscious trigger):
-   - Polls `external_calls` for pending LLM tasks (think calls)
-   - Triggers scheduled heartbeats via `should_run_heartbeat()` / `start_heartbeat()`
-   - Executes the heartbeat's chosen actions via `execute_heartbeat_action()`
-
-2) Maintenance worker (subconscious substrate upkeep):
+This module contains the maintenance worker (subconscious substrate upkeep):
    - Runs `run_subconscious_maintenance()` on its own schedule (`should_run_maintenance()`)
    - Optionally bridges outbox/inbox to RabbitMQ (integration plumbing)
 
-These are intentionally separate concerns with separate triggers.
+Reflective processing ships as the beat worker (see `docs/beats.md`), which is off
+until you turn it on.
 """
 
 import asyncio
@@ -2250,29 +2244,21 @@ class MaintenanceWorker:
 
 async def _amain(mode: str) -> None:
     """Async entry point for workers."""
-    hb_worker = HeartbeatWorker()
     maint_worker = MaintenanceWorker()
 
     import signal
 
     def shutdown(signum, frame):
-        hb_worker.stop()
         maint_worker.stop()
 
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    mode = (mode or "both").strip().lower()
-    if mode == "heartbeat":
-        await hb_worker.run()
-        return
+    mode = (mode or "maintenance").strip().lower()
     if mode == "maintenance":
         await maint_worker.run()
         return
-    if mode == "both":
-        await asyncio.gather(hb_worker.run(), maint_worker.run())
-        return
-    raise ValueError("mode must be one of: heartbeat, maintenance, both")
+    raise ValueError("mode must be one of: maintenance")
 
 
 def main() -> int:
@@ -2280,8 +2266,8 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="sill-worker", description="Run Sill background workers.")
     p.add_argument(
         "--mode",
-        choices=["heartbeat", "maintenance", "both", "research"],
-        default=os.getenv("AGI_WORKER_MODE", "both"),
+        choices=["maintenance", "research"],
+        default=os.getenv("AGI_WORKER_MODE", "maintenance"),
         help="Which worker to run.",
     )
     args = p.parse_args()

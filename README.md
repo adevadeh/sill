@@ -128,9 +128,9 @@ first `docker compose up`.
 - `rabbitmq` — Used by the maintenance worker for inter-process events.
 - `maintenance_worker` — Default-on. Importance decay, drift tracking,
   housekeeping.
-- `heartbeat_worker` — **Opt-in only** via the `heartbeat` Compose
-  profile. Periodic synthesis / reflection cycles. Don't bring this up
-  unless you've configured an LLM provider.
+
+Reflective processing ships as the beat worker (see `docs/beats.md`), which is off
+until you turn it on.
 
 **Console scripts** (installed into pipx-managed bin, or
 `~/.local/bin` if pipx isn't available):

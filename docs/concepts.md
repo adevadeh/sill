@@ -58,17 +58,15 @@ you can ignore them for normal recall.
   `precompact-snapshot` and `goodnight-checkpoint` read/write this.
 - `goal_memory_links` — ties memories to the goal they came out of.
 
-### Maintenance / heartbeat config and state
+### Maintenance config and state
 
-- `heartbeat_config`, `maintenance_config`, `config` — knobs.
-- `heartbeat_state`, `maintenance_state` — worker state machines.
-- `heartbeat_log` — periodic synthesis output.
+- `maintenance_config`, `config` — knobs.
+- `maintenance_state` — worker state machine.
 - `external_calls`, `outbox_messages` — for the RabbitMQ message bus.
 
 The `maintenance_worker` runs by default and handles importance decay,
-drift tracking, and other housekeeping. The `heartbeat_worker` is
-**opt-in** via the `heartbeat` Compose profile, because it needs an
-LLM provider configured.
+drift tracking, and other housekeeping. Reflective processing ships as the beat 
+worker (see `docs/beats.md`), which is off until you turn it on.
 
 ### Embedding cache
 
@@ -80,8 +78,7 @@ LLM provider configured.
 ### Clusters, episodes, and the rest
 
 - `memory_clusters`, `memory_cluster_members`, `cluster_relationships`,
-  `memory_neighborhoods` — graph-of-memories structures used by the
-  heartbeat synthesis loop.
+  `memory_neighborhoods` — graph-of-memories structures used by synthesis.
 - `episodes`, `episode_memories` — temporal groupings.
 - `memory_changes`, `importance_updates`, `boundaries`,
   `emotional_states`, `relationship_discoveries`,
@@ -92,8 +89,8 @@ LLM provider configured.
   install.
 
 If you only ever call `recall` and `remember`, you'll touch maybe
-four of these tables. The rest are there for the heartbeat /
-maintenance / research workflows to grow into.
+four of these tables. The rest are there for the maintenance and
+research workflows to grow into.
 
 ---
 
@@ -227,22 +224,10 @@ and drift tracking; the loop is conservative and idempotent.
 
 Logs: `docker compose logs maintenance_worker`.
 
-### Heartbeat (opt-in)
+### Beat worker
 
-```bash
-docker compose -f backend/docker-compose.yml --profile heartbeat up -d
-```
-
-Brings up `heartbeat_worker` (`sill-worker --mode heartbeat`).
-Periodic synthesis: clusters memories, suggests new
-worldview-primitives, flags contradictions. Needs an LLM provider
-configured (the `heartbeat` extra installs `openai` and `anthropic`
-SDKs).
-
-If you're running with a local model (e.g. Gemma via Ollama), point
-the heartbeat at it with the standard OpenAI-API env vars
-(`OPENAI_API_KEY`, `OPENAI_BASE_URL`). Most installs leave heartbeat
-off entirely.
+Reflective processing ships as the beat worker (see `docs/beats.md`), which is off
+until you turn it on.
 
 ---
 
