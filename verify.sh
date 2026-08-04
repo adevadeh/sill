@@ -87,14 +87,14 @@ fi
 
 # --- check 5 -------------------------------------------------------------------
 say "Check 5/5: schema level current"
-want="$(ls "$SILL_DIR"/backend/migrations/[0-9][0-9][0-9]_*.sql 2>/dev/null | wc -l | tr -d '[:space:]')"
+want="$(ls "$SILL_DIR"/backend/migrations/[0-9][0-9][0-9]_*.sql 2>/dev/null | wc -l | tr -d '[:space:]' || echo 0)"
 have="$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
   "SELECT count(*) FROM schema_migrations" 2>/dev/null | tr -d '[:space:]' || echo 0)"
 if [[ -z "$have" || "$have" -lt "$want" ]]; then
   fail "schema_migrations has ${have:-0} of $want migrations (run ./upgrade.sh)"
 fi
 speaker_col="$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
-  "SELECT count(*) FROM information_schema.columns WHERE table_name='memories' AND column_name='speaker'" 2>/dev/null | tr -d '[:space:]')"
+  "SELECT count(*) FROM information_schema.columns WHERE table_name='memories' AND column_name='speaker'" 2>/dev/null | tr -d '[:space:]' || echo 0)"
 if [[ "$speaker_col" != "1" ]]; then
   fail "memories.speaker column missing despite stamp — run ./upgrade.sh and report if it recurs"
 fi
