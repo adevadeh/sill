@@ -345,7 +345,6 @@ order.
 | `SILL_EMBEDDINGS_CONTAINER`        | `sill_embeddings`          |
 | `SILL_RABBITMQ_CONTAINER`          | `sill_rabbitmq`            |
 | `SILL_MAINTENANCE_WORKER_CONTAINER`| `sill_maintenance_worker`  |
-| `SILL_HEARTBEAT_WORKER_CONTAINER`  | `sill_heartbeat_worker`    |
 
 Useful when running multiple Sill stacks on the same host.
 

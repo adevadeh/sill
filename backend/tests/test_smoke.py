@@ -12,6 +12,9 @@ import importlib
 import pytest
 
 # Top-level modules declared in pyproject.toml's [tool.setuptools] py-modules.
+# (beat_worker and rabbit_bridge added here to actually match that list —
+# beat_worker was missing since its own addition; see commit 8be59b4, which
+# fixed pyproject.toml/Dockerfile.worker for the same gap but not this file.)
 MODULES = [
     "memory_tools",
     "cognitive_memory_api",
@@ -20,6 +23,8 @@ MODULES = [
     "sill_cli",
     "sill_mcp_server",
     "worker",
+    "rabbit_bridge",
+    "beat_worker",
 ]
 
 # Modules backing the [project.scripts] entry points, each expected to expose

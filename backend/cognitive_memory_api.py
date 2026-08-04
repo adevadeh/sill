@@ -1315,7 +1315,7 @@ class CognitiveMemory:
         priority: float = 0.5,
     ) -> UUID:
         """
-        Request that the heartbeat explore a particular query.
+        Request a background exploration of a specific query.
 
         Higher priority (0-1) means more likely to be picked up.
         """
