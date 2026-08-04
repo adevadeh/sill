@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd LaunchAgent for the Sill beat worker (macOS).
+
+  Nothing installs this for you — see scheduling/README.md for the
+  substitute-and-load steps, and docs/beats.md's "Permissions" section for
+  why you must run one beat by hand and confirm it actually did something
+  BEFORE loading this agent. A schedule that ticks on time while every tool
+  call is silently denied looks identical to a healthy install from the
+  outside; the by-hand run is what tells the two apart.
+
+  Tokens (see scheduling/README.md for how install.sh's own helpers resolve
+  these): {{SILL_PYTHON}} the interpreter with the backend package installed
+  (pipx venv, or the ~/.local/share/sill-venv fallback); {{SILL_DIR}} this
+  repo's root (where beats.json and prompts/ live — NOT backend/);
+  {{SILL_LOG_DIR}} where stdout/stderr and the worker's own log go.
+
+  RunAtLoad + KeepAlive means launchd retries forever on crash, spaced no
+  closer than ThrottleInterval — there is no give-up state to clear, unlike
+  systemd's start-rate limiter (see the systemd template and
+  scheduling/README.md for that asymmetry).
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.sill.beat-worker</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{SILL_PYTHON}}</string>
+		<string>-m</string>
+		<string>worker</string>
+		<string>--mode</string>
+		<string>beat</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>{{SILL_DIR}}</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>SILL_PROJECT_ROOT</key>
+		<string>{{SILL_DIR}}</string>
+		<key>SILL_LOG_DIR</key>
+		<string>{{SILL_LOG_DIR}}</string>
+	</dict>
+
+	<!-- Start once when the agent is loaded, rather than waiting a full
+	     interval for the first beat. Combined with beat_worker.py's own
+	     loop (which fires its first beat immediately, before its first
+	     sleep) this means a broken config surfaces within moments of
+	     loading, not hours later. -->
+	<key>RunAtLoad</key>
+	<true/>
+
+	<!-- Restart on any exit, crash or clean. There is no start-rate limiter
+	     to hit and no failed state to clear (contrast the systemd unit) —
+	     ThrottleInterval below is the only brake. -->
+	<key>KeepAlive</key>
+	<true/>
+
+	<!-- Minimum seconds between relaunches, so a fast crash-loop (e.g. a
+	     typo'd {{SILL_PYTHON}} path) doesn't spin the CPU retrying every
+	     few milliseconds forever. -->
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
+
+	<key>StandardOutPath</key>
+	<string>{{SILL_LOG_DIR}}/beat-worker-launchd-stdout.log</string>
+
+	<key>StandardErrorPath</key>
+	<string>{{SILL_LOG_DIR}}/beat-worker-launchd-stderr.log</string>
+</dict>
+</plist>

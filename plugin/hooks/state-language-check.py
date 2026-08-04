@@ -4,8 +4,18 @@ State-language-check hook.
 
 Fires PreToolUse on memory-storage tool calls (mcp__sill__remember,
 mcp__sill__remember_batch[_raw], Bash-with-sill.py-notice) and on
-Write/Edit when the path is under journals/ or docs/. Detects borrowed
-human embodied-state language used as exit-script or unchecked state-claim.
+Write/Edit when the path is in scope. Detects borrowed human embodied-state
+language used as exit-script or unchecked state-claim.
+
+Scope for the Write/Edit/apply_patch check: SILL_BEAT_JOURNAL_DIRS when set
+(colon-separated path fragments — the same convention stored-slot-guard.py
+and tool-type-witness.py read; beat_worker.spawn_beat() derives and exports
+it to every beat child from the loaded voice config), else journals/ and
+docs/ as the fallback default. The fallback is not vestigial: spawn_beat()
+never wraps an interactive session, so an interactive Claude Code session —
+or any install that never touches the beat worker at all — always sees the
+variable unset and gets exactly the journals/+docs/ coverage this hook has
+always had.
 
 Origin: borrowed human embodied-state language performed as exit-script
 convention — coherent text matching a human end-of-session pattern
@@ -89,16 +99,24 @@ def check_state_language(content: str) -> list[tuple[str, str, str]]:
     return findings
 
 
+# Fallback default: this house's own directory convention, kept so an
+# install that never sets SILL_BEAT_JOURNAL_DIRS — every interactive
+# session, and any non-beat install — loses no coverage from before this
+# variable existed.
+_DEFAULT_JOURNAL_DIR_FRAGMENTS = ("journals/", "docs/")
+
+
+def _journal_dir_fragments() -> tuple[str, ...]:
+    raw = os.environ.get("SILL_BEAT_JOURNAL_DIRS", "")
+    fragments = tuple(f for f in raw.split(":") if f)
+    return fragments if fragments else _DEFAULT_JOURNAL_DIR_FRAGMENTS
+
+
 def is_relevant_path(p: str | None) -> bool:
     if not p:
         return False
     normalized = p.replace("\\", "/")
-    return (
-        normalized.startswith("journals/")
-        or normalized.startswith("docs/")
-        or "/journals/" in normalized
-        or "/docs/" in normalized
-    )
+    return any(fragment in normalized for fragment in _journal_dir_fragments())
 
 
 def is_tool_name(tool_name: str, *suffixes: str) -> bool:

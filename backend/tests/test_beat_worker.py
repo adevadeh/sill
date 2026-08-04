@@ -1,7 +1,10 @@
 """Beat worker: config, state, classification, and the output-verification
-guard. No subprocess spawning, no DB, no network."""
+guard. No real subprocess spawning (subprocess.run is monkeypatched where a
+test needs to look at what spawn_beat() would hand the child), no DB, no
+network."""
 
 import json
+import subprocess
 
 import pytest
 
@@ -119,7 +122,7 @@ def test_spawn_beat_survives_unreadable_prompt(tmp_path, monkeypatch, mode):
         name="analyst", prompt="prompts/voice.md",
         transcripts="logs/analyst", output_glob=None, kickoff="Begin.",
     )
-    success, duration, transcript_path = bw.spawn_beat(voice)
+    success, duration, transcript_path = bw.spawn_beat(voice, [voice])
     assert success is False
     assert duration == 0.0
     assert transcript_path == ""
@@ -128,3 +131,118 @@ def test_spawn_beat_survives_unreadable_prompt(tmp_path, monkeypatch, mode):
     bw.write_state(state_path, 0)
     bw.advance_if(state_path, index=0, n_voices=2, success=success)
     assert bw.read_state(state_path) == 0          # rotation must not advance
+
+
+# ---------------------------------------------------------------------------
+# Guard scope derivation (Step 3b — wiring SILL_BEAT_JOURNAL_DIRS so
+# stored-slot-guard.py / tool-type-witness.py / state-language-check.py's
+# beat-aware fallback stop being opt-in-with-nothing-opting-in).
+# ---------------------------------------------------------------------------
+
+TWO_VOICES = [
+    bw.Voice(name="analyst", prompt="prompts/analyst.md",
+              transcripts="logs/analyst", output_glob="notes/analyst-*.md",
+              kickoff="Begin."),
+    bw.Voice(name="reflector", prompt="prompts/reflector.md",
+              transcripts="logs/reflector", output_glob="journal/reflector-*.md",
+              kickoff="Begin."),
+]
+
+
+def test_journal_dirs_for_voices_derives_from_output_glob_and_transcripts():
+    """Matches backend/beats.example.json's two voices: each voice
+    contributes its output_glob's directory, then its transcripts dir."""
+    assert bw.journal_dirs_for_voices(TWO_VOICES) == (
+        "notes/:logs/analyst/:journal/:logs/reflector/"
+    )
+
+
+def test_journal_dirs_for_voices_dedupes_shared_fragments():
+    voices = [
+        bw.Voice(name="a", prompt="p", transcripts="shared/",
+                  output_glob="shared/a-*.md", kickoff="Begin."),
+        bw.Voice(name="b", prompt="p", transcripts="shared/",
+                  output_glob="shared/b-*.md", kickoff="Begin."),
+    ]
+    assert bw.journal_dirs_for_voices(voices) == "shared/"
+
+
+def test_journal_dirs_for_voices_skips_a_voice_with_no_output_glob():
+    voices = [bw.Voice(name="a", prompt="p", transcripts="logs/a",
+                        output_glob=None, kickoff="Begin.")]
+    assert bw.journal_dirs_for_voices(voices) == "logs/a/"
+
+
+def test_journal_dirs_for_voices_empty_for_no_voices():
+    """An install with no configured voices exports nothing — the guards
+    stay opt-in-and-off, exactly as they were before this wiring."""
+    assert bw.journal_dirs_for_voices([]) == ""
+
+
+def test_spawn_beat_exports_journal_dirs_derived_from_full_voice_config(tmp_path, monkeypatch):
+    """The wiring this step exists for: spawn_beat() must export
+    SILL_BEAT_JOURNAL_DIRS to the child, derived from every voice in the
+    config — not just the one voice running this particular beat — so the
+    two opt-in guards and state-language-check.py's beat-aware fallback are
+    scoped with zero operator configuration. subprocess.run is monkeypatched
+    (never a real CLI spawn); it also completes the run so this exercises
+    the full success path, not just an early return."""
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "analyst.md").write_text("Standing prompt.\n")
+    (tmp_path / "notes").mkdir()
+
+    voices = [
+        bw.Voice(name="analyst", prompt="prompts/analyst.md",
+                  transcripts="logs/analyst", output_glob="notes/analyst-*.md",
+                  kickoff="Begin."),
+        bw.Voice(name="reflector", prompt="prompts/reflector.md",
+                  transcripts="logs/reflector", output_glob="journal/reflector-*.md",
+                  kickoff="Begin."),
+    ]
+
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        (tmp_path / "notes" / "analyst-001.md").write_text("beat output")
+        return subprocess.CompletedProcess(cmd, 0, stdout="did something", stderr="")
+
+    monkeypatch.setattr(bw.subprocess, "run", fake_run)
+
+    success, duration, transcript_path = bw.spawn_beat(voices[0], voices)
+
+    assert success is True, "fixture should exercise the verified-success path"
+    assert captured_env.get("SILL_BEAT_JOURNAL_DIRS") == (
+        "notes/:logs/analyst/:journal/:logs/reflector/"
+    )
+    # The other export this same env dict carries must still be present —
+    # this test should not be the reason a regression there goes unnoticed.
+    assert captured_env.get("SILL_DETACHED_BEAT") == "1"
+
+
+def test_spawn_beat_sets_no_journal_dirs_var_when_derivation_is_empty(tmp_path, monkeypatch):
+    """A voice with neither a usable output_glob directory nor a transcripts
+    value (degenerate, but not something spawn_beat should crash over) must
+    not export an empty SILL_BEAT_JOURNAL_DIRS — an empty string would still
+    be "set" from os.environ.get's point of view and change the guards'
+    unset-means-no-scope contract."""
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "voice.md").write_text("Standing prompt.\n")
+
+    voice = bw.Voice(name="bare", prompt="prompts/voice.md",
+                      transcripts="", output_glob=None, kickoff="Begin.")
+
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        return subprocess.CompletedProcess(cmd, 0, stdout="did something", stderr="")
+
+    monkeypatch.setattr(bw.subprocess, "run", fake_run)
+
+    success, _duration, _transcript = bw.spawn_beat(voice, [voice])
+
+    assert success is True  # no output_glob declared -> produced_output() defaults True
+    assert "SILL_BEAT_JOURNAL_DIRS" not in captured_env

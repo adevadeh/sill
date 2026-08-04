@@ -14,6 +14,12 @@ Detached by design: the subprocess has no interactive user, so anything
 that would prompt for permission or wait for direction has nowhere to
 route. A voice must decide and act on its own.
 
+Every child also gets SILL_BEAT_JOURNAL_DIRS set to the voice config's own
+directories (see journal_dirs_for_voices()) — the scope the two receipt
+guards (plugin/hooks/stored-slot-guard.py, tool-type-witness.py) and
+state-language-check.py's beat-aware fallback read. This is the only place
+that variable is ever set: an install with no beats.json never sets it.
+
 Rotation state persists outside /tmp (see default_state_path()) so a
 worker restart, or an unrelated reboot that clears /tmp, cannot silently
 reset which voice is due next with no record that it happened.
@@ -123,6 +129,42 @@ def load_voices(path: Path) -> list[Voice]:
         except KeyError as exc:
             raise ValueError(f"voice entry {i} in {path} is missing required key {exc}") from exc
     return voices
+
+
+# ---------------------------------------------------------------------------
+# Guard scope derivation — plugin/hooks/stored-slot-guard.py and
+# tool-type-witness.py are opt-in via SILL_BEAT_JOURNAL_DIRS (unset = no
+# scope = they check nothing), and state-language-check.py reads the same
+# variable as a beat-aware addition to its journals/+docs/ default. Nothing
+# in this codebase sets that variable except spawn_beat() below, computed
+# fresh from the voice config already loaded for this worker — so a beat's
+# own journal writes are guarded with zero operator configuration, and an
+# install that never defines voices never sets the variable at all.
+# ---------------------------------------------------------------------------
+
+def journal_dirs_for_voices(voices: list[Voice]) -> str:
+    """Colon-joined, deduped, stable-order scope fragments for
+    SILL_BEAT_JOURNAL_DIRS: the directory part of every voice's
+    output_glob, then that voice's transcripts dir verbatim (already a
+    directory, not a glob) — in voice order, first-seen-wins on dupes.
+    Both are exactly the paths a beat's own writes land under, so together
+    they are the guards' correct scope without any operator input.
+    """
+    fragments: list[str] = []
+
+    def add(fragment: str) -> None:
+        normalized = fragment if fragment.endswith("/") else f"{fragment}/"
+        if normalized not in fragments:
+            fragments.append(normalized)
+
+    for v in voices:
+        if v.output_glob:
+            directory = os.path.dirname(v.output_glob)
+            if directory:
+                add(directory)
+        if v.transcripts:
+            add(v.transcripts)
+    return ":".join(fragments)
 
 
 # ---------------------------------------------------------------------------
@@ -362,7 +404,7 @@ def _write_transcript(
 # Spawning a beat
 # ---------------------------------------------------------------------------
 
-def spawn_beat(voice: Voice) -> tuple[bool, float, str]:
+def spawn_beat(voice: Voice, voices: list[Voice]) -> tuple[bool, float, str]:
     """Spawn one headless agent-CLI session running `voice`. Returns
     (success, duration_seconds, transcript_path). Never raises: every
     failure mode is caught, logged, and reported through the return value
@@ -371,6 +413,11 @@ def spawn_beat(voice: Voice) -> tuple[bool, float, str]:
     `success` means verified success: exit 0 AND (no declared output_glob,
     or the glob gained a new file). Exit 0 alone is not enough — see
     produced_output() above.
+
+    `voices` is the full loaded rotation, not just `voice` — the child's
+    exported SILL_BEAT_JOURNAL_DIRS (see journal_dirs_for_voices() above)
+    is a fixed scope covering every voice's dirs, not only the one running
+    this beat, so the guards don't need to be told which voice is current.
     """
     prompt_path = PROJECT_ROOT / voice.prompt
     transcripts_dir = PROJECT_ROOT / voice.transcripts
@@ -424,6 +471,20 @@ def spawn_beat(voice: Voice) -> tuple[bool, float, str]:
 
     spawn_clock = datetime.now().astimezone().isoformat(timespec="seconds")
     start_time = time.time()
+
+    # SILL_DETACHED_BEAT=1 is the authoritative headless flag sill's own
+    # hooks gate on, so a spawned child does not try to inject recall or
+    # advance any interactive-session clock.
+    child_env = {**os.environ, "SILL_DETACHED_BEAT": "1"}
+    journal_dirs = journal_dirs_for_voices(voices)
+    if journal_dirs:
+        # Opt-in scope for stored-slot-guard.py / tool-type-witness.py /
+        # state-language-check.py's beat-aware fallback (docs/beats.md
+        # permissions section) — derived above from the voice config, not
+        # configured by the operator, so a beat's own journal writes are
+        # guarded automatically and a non-beat install never sets this.
+        child_env["SILL_BEAT_JOURNAL_DIRS"] = journal_dirs
+
     try:
         result = subprocess.run(
             [CLI, "--print", "-p", prompt],
@@ -431,10 +492,7 @@ def spawn_beat(voice: Voice) -> tuple[bool, float, str]:
             text=True,
             timeout=TIMEOUT_SECONDS,
             cwd=str(PROJECT_ROOT),
-            # SILL_DETACHED_BEAT=1 is the authoritative headless flag sill's
-            # own hooks gate on, so a spawned child does not try to inject
-            # recall or advance any interactive-session clock.
-            env={**os.environ, "SILL_DETACHED_BEAT": "1"},
+            env=child_env,
         )
     except subprocess.TimeoutExpired:
         duration = time.time() - start_time
@@ -511,13 +569,14 @@ def run_beat_loop() -> None:
     logger.info(f"  Rotation state: {state_path}")
     for v in voices:
         logger.info(f"  Voice [{v.name}]: prompt={v.prompt}, transcripts={v.transcripts}")
+    logger.info(f"  Guard scope (SILL_BEAT_JOURNAL_DIRS for each child): {journal_dirs_for_voices(voices)!r}")
 
     while True:
         beat_start = time.time()
         index = read_state(state_path) % len(voices)
         voice = voices[index]
 
-        success, _duration, _transcript = spawn_beat(voice)
+        success, _duration, _transcript = spawn_beat(voice, voices)
         advance_if(state_path, index=index, n_voices=len(voices), success=success)
         if success and POST_HOOK:
             _run_post_hook(POST_HOOK)

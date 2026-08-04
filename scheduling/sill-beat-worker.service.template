@@ -1,0 +1,54 @@
+# systemd --user unit for the Sill beat worker (Linux).
+#
+# Nothing installs this for you — see scheduling/README.md for the
+# substitute-and-install steps, and docs/beats.md's "Permissions" section
+# for why you must run one beat by hand and confirm it actually did
+# something BEFORE installing this unit. A schedule that ticks on time
+# while every tool call is silently denied looks identical to a healthy
+# install from the outside; the by-hand run is what tells the two apart.
+#
+# Tokens: {{SILL_PYTHON}} the interpreter with the backend package
+# installed (pipx venv, or the ~/.local/share/sill-venv fallback);
+# {{SILL_DIR}} this repo's root (where beats.json and prompts/ live — NOT
+# backend/); {{SILL_LOG_DIR}} where stdout/stderr and the worker's own log
+# go.
+#
+# This is a --user unit. Without `loginctl enable-linger <user>` run once
+# at install time, systemd stops user units the moment that user's last
+# session logs out — the behavior launchd gives for free on macOS (a
+# LaunchAgent has no such linger requirement). See scheduling/README.md.
+
+[Unit]
+Description=Sill beat worker — config-driven alternating reflective loop
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{SILL_DIR}}
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=SILL_PROJECT_ROOT={{SILL_DIR}}
+Environment=SILL_LOG_DIR={{SILL_LOG_DIR}}
+ExecStart={{SILL_PYTHON}} -m worker --mode beat
+StandardOutput=append:{{SILL_LOG_DIR}}/beat-worker-systemd-stdout.log
+StandardError=append:{{SILL_LOG_DIR}}/beat-worker-systemd-stderr.log
+
+# Restart on any exit, crash or clean — mirrors the launchd template's
+# KeepAlive. Unlike launchd, systemd's own start-rate limiter
+# (StartLimitIntervalSec / StartLimitBurst, left at their distro defaults
+# here) will give up restarting once too many attempts land inside one
+# window, leaving the unit in a "start-limit-hit" failed state rather than
+# retrying forever. Because beat_worker.py's loop fires its first beat
+# immediately on start (no initial sleep — see backend/beat_worker.py), a
+# broken config (bad {{SILL_PYTHON}} path, missing beats.json) crashes fast
+# and repeatedly, and can hit that limiter within moments of starting the
+# unit. Check `systemctl --user status sill-beat-worker.service` for
+# "start-limit-hit" if the unit looks inactive right after you start it;
+# `systemctl --user reset-failed sill-beat-worker.service` clears it once
+# you've fixed the underlying problem, or raise StartLimitIntervalSec /
+# StartLimitBurst in this [Service] block if you'd rather widen the window
+# than rely on noticing and clearing it by hand.
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=default.target

@@ -51,6 +51,34 @@ All notable changes to Sill are recorded here. Format loosely follows
   `echo =word` trap — the one hook in the suite that blocks rather than
   advises); `clear-handoff` (SessionStart; re-injects the prior session's
   final assistant message after `/clear`).
+- **Beat worker** — `sill-worker --mode beat`: a config-driven, alternating
+  rotation of headless agent-CLI sessions (`backend/beat_worker.py`,
+  `beats.json`/`backend/beats.example.json`), durable rotation state (never
+  `/tmp` — a reboot must not silently reset which voice is due next),
+  per-voice output verification (exit 0 is not enough; a beat that produced
+  nothing does not advance rotation — the guard for a headless CLI silently
+  auto-denying its own tool calls), and a worker-written spawn-clock
+  transcript header the child cannot fabricate.
+- **Receipt guards** — `stored-slot-guard.py` (Write/Edit; denies a
+  `Stored:` line naming an id that was never actually minted) and
+  `tool-type-witness.py` (Write; denies an unquoted carrying-act claim like
+  "arrived by Edit"). Both are opt-in via `SILL_BEAT_JOURNAL_DIRS`, which
+  `beat_worker.spawn_beat()` now derives from the loaded voice config and
+  exports to every beat child automatically — zero operator configuration,
+  and zero cost to a non-beat install, which never sets the variable at
+  all. `state-language-check.py` reads the same variable as a beat-aware
+  addition to its existing `journals/`/`docs/` default.
+- **Starter prompts** — `prompts/analyst.md` and `prompts/reflector.md`
+  (the two shipped voices, craft without house-specific citations) and a
+  shared `prompts/_receipt-gate.md` fragment both voices include by
+  reference, so the mint-receipt protocol can't drift between them.
+- **Scheduling templates** — `scheduling/com.sill.beat-worker.plist.template`
+  (launchd) and `scheduling/sill-beat-worker.service.template` (systemd
+  `--user`), plus `docs/beats.md`: voice config format, the full env-var
+  surface, and a mandatory permissions section — ordered before the
+  scheduling section on purpose — covering the failure mode where a
+  headless agent CLI with no tool permissions denies every call and exits
+  0, and how to verify a real beat before scheduling any.
 
 ### Fixed
 
