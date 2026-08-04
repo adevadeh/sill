@@ -27,6 +27,12 @@ All notable changes to Sill are recorded here. Format loosely follows
 - Access telemetry decoupled from importance (removed the compounding
   importance-on-access trigger path; `touch_memory_access` is pure telemetry).
 
+### Removed
+
+- Internal `.history/` scratch migrations from the v0.1.0 extraction
+  (house-internal drafts; never executed at runtime). The shipped image now
+  contains only the baseline schema and the numbered migrations.
+
 ## v0.1.0 — 2026-06-03
 
 Initial extraction from the agi-memory research project.

@@ -61,10 +61,15 @@ applies any pending `backend/migrations/NNN_*.sql` in order (tracked in the
 `./upgrade.sh --dry-run`. Fresh installs never need it — first boot already
 initializes at the current level (check with `./verify.sh`, check 5).
 
-Restore, if you ever need it:
+Restore, if you ever need it — the dump replays into an **empty** database, so
+drop and recreate first, then verify (graph-extension data can be finicky
+across dump/restore, so treat `./verify.sh` as part of the restore):
 
 ```bash
+docker exec sill_db psql -U sill -d postgres \
+  -c "DROP DATABASE IF EXISTS sill WITH (FORCE); CREATE DATABASE sill OWNER sill;"
 gunzip -c backups/<file>.sql.gz | docker exec -i sill_db psql -U sill -d sill
+./verify.sh
 ```
 
 ---

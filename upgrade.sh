@@ -18,8 +18,11 @@
 #   --no-verify   Skip step 5.
 #   --help        Show this help.
 #
-# Restore procedure (manual, deliberate):
+# Restore procedure (manual, deliberate; the dump replays into an EMPTY database):
+#   docker exec <container> psql -U <user> -d postgres \
+#     -c 'DROP DATABASE IF EXISTS <db> WITH (FORCE); CREATE DATABASE <db> OWNER <user>;'
 #   gunzip -c backups/<file>.sql.gz | docker exec -i <container> psql -U <user> -d <db>
+#   Then run ./verify.sh — graph-extension data can be finicky across dump/restore.
 
 set -euo pipefail
 
@@ -35,7 +38,7 @@ NO_VERIFY=0
 fail() { printf '  FAIL: %s\n' "$*" >&2; exit 1; }
 pass() { printf '  pass: %s\n' "$*"; }
 say()  { printf '\n=== %s ===\n' "$*"; }
-usage() { sed -n '2,22p' "$0"; }
+usage() { sed -n '2,25p' "$0"; }
 
 while (( $# )); do
   case "$1" in
@@ -52,14 +55,14 @@ say "Preflight"
 docker exec "$CONTAINER" true 2>/dev/null \
   || fail "container '$CONTAINER' is not running (set SILL_DB_CONTAINER or start the stack)"
 [[ "$(psql_c 'SELECT 1' 2>/dev/null)" == "1" ]] \
-  || fail "psql not answering in '$CONTAINER' as user '$DB_USER' db '$DB_NAME'"
+  || fail "psql not answering in '$CONTAINER' as user '$DB_USER' db '$DB_NAME' — start the stack (cd backend && docker compose up -d) or set SILL_DB_CONTAINER/POSTGRES_USER/POSTGRES_DB to match your install"
 pass "db reachable in '$CONTAINER'"
 
 say "Pending migrations"
 applied="$(psql_c 'SELECT migration_id FROM schema_migrations ORDER BY migration_id' 2>/dev/null || true)"
 pending=()
 for f in "$MIGRATIONS_DIR"/[0-9][0-9][0-9]_*.sql; do
-  [[ -e "$f" ]] || fail "no migrations found under $MIGRATIONS_DIR"
+  [[ -e "$f" ]] || fail "no migrations found under $MIGRATIONS_DIR — run this from a full checkout of the sill repo (backend/migrations/ is a repo asset)"
   id="$(basename "$f" | cut -c1-3)"
   grep -qx "$id" <<<"$applied" || pending+=("$f")
 done
@@ -74,9 +77,9 @@ say "Backup (never upgrade without one)"
 mkdir -p "$BACKUP_DIR"
 backup="$BACKUP_DIR/${DB_NAME}-preupgrade-$(date -u +%Y%m%dT%H%M%SZ).sql.gz"
 docker exec "$CONTAINER" pg_dump -U "$DB_USER" -d "$DB_NAME" | gzip > "$backup" \
-  || fail "pg_dump failed — refusing to touch the schema"
+  || fail "pg_dump failed — nothing was applied; check 'docker logs $CONTAINER' and free disk space, then re-run"
 bytes="$(wc -c < "$backup" | tr -d '[:space:]')"
-(( bytes > 5000 )) || fail "backup is only ${bytes} bytes — looks truncated; refusing to continue"
+(( bytes > 5000 )) || fail "backup is only ${bytes} bytes — looks truncated; nothing was applied. Check free disk space, inspect $backup, then re-run"
 pass "backup at $backup (${bytes} bytes)"
 
 say "Apply"
