@@ -67,7 +67,8 @@ across dump/restore, so treat `./verify.sh` as part of the restore):
 
 ```bash
 docker exec sill_db psql -U sill -d postgres \
-  -c "DROP DATABASE IF EXISTS sill WITH (FORCE); CREATE DATABASE sill OWNER sill;"
+  -c "DROP DATABASE IF EXISTS sill WITH (FORCE);" \
+  -c "CREATE DATABASE sill OWNER sill;"
 gunzip -c backups/<file>.sql.gz | docker exec -i sill_db psql -U sill -d sill
 ./verify.sh
 ```

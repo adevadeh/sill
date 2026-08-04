@@ -20,7 +20,7 @@
 #
 # Restore procedure (manual, deliberate; the dump replays into an EMPTY database):
 #   docker exec <container> psql -U <user> -d postgres \
-#     -c 'DROP DATABASE IF EXISTS <db> WITH (FORCE); CREATE DATABASE <db> OWNER <user>;'
+#     -c 'DROP DATABASE IF EXISTS <db> WITH (FORCE);' -c 'CREATE DATABASE <db> OWNER <user>;'
 #   gunzip -c backups/<file>.sql.gz | docker exec -i <container> psql -U <user> -d <db>
 #   Then run ./verify.sh — graph-extension data can be finicky across dump/restore.
 
