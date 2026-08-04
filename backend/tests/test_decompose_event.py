@@ -19,7 +19,7 @@ def test_bundle_wrapped_in_one_transaction():
 
 def test_acts_inherit_spec_speaker_and_patch_force():
     sql = de.build_sql(SPEC)
-    assert sql.count("speaker = ") == 2
+    assert sql.count("speaker = $sa$Ada$sa$") == 2
     assert "force = 'assertive'" in sql and "force = 'directive'" in sql
 
 
