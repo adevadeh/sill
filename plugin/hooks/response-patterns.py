@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Ported from agi-memory .claude/hooks/response-patterns.py (2026-08-04).
 """
 Master hook: Check response text against configurable patterns.
 Triggers on Stop event.
@@ -46,16 +47,43 @@ def log(message: str):
         f.write(f"{timestamp} | {message}\n")
 
 
-def log_match(pattern_name: str, matched_text: str, response_snippet: str):
+def log_match(pattern_name: str, matched_text: str, response_snippet: str,
+              session_id: str | None = None, cwd: str | None = None):
     """Log match data for later analysis."""
     entry = {
         "timestamp": datetime.now().isoformat(),
         "pattern": pattern_name,
         "matched": matched_text,
         "context": response_snippet[:200],
+        "session_id": session_id,
+        "cwd": cwd,
     }
     with open(DATA_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
+
+
+def carry_forward(warnings: list[str], session_id: str | None):
+    """Stash this turn's warnings where the UserPromptSubmit hook will find them.
+
+    A Stop hook fires after the reply is already on screen, so its own
+    additionalContext is the earliest Claude can act — next turn. The sidecar is
+    the belt to that braces: spontaneous-recall.py reads and deletes it at the
+    top of the next turn, so the flag arrives before a single token is written.
+    """
+    # Key on the SAME id spontaneous-recall.py reads with (env wins there too).
+    # A mismatch would write under one key and read under another — a silent miss,
+    # which is the failure class this whole change exists to remove.
+    sid = (os.environ.get("CLAUDE_CODE_SESSION_ID") or session_id or "").strip()
+    if not sid:
+        return
+    try:
+        path = _SILL_LOG_DIR / f"response-patterns-last-{sid}.json"
+        path.write_text(json.dumps({
+            "timestamp": datetime.now().isoformat(),
+            "warnings": warnings,
+        }))
+    except Exception as e:  # never break the hook over the sidecar
+        log(f"carry_forward failed: {e}")
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -77,6 +105,13 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     for line in frontmatter_text.split("\n"):
         line = line.rstrip()
         if not line:
+            continue
+
+        # Comment lines (common inside a `patterns:` block, to annotate a
+        # regex) must not be treated as key: value pairs — a comment that
+        # happens to contain a colon would otherwise reset the in-progress
+        # list and silently drop every pattern after it.
+        if line.strip().startswith("#"):
             continue
 
         # Check for list item
@@ -261,6 +296,8 @@ INSIGHT_PROMPT = """You are checking whether an AI assistant learned something S
 
 Say YES only if the response contains a SPECIFIC insight: a new understanding, a non-obvious connection, a changed perspective with concrete detail about WHAT changed and WHY.
 
+ALSO say YES — this is a first-class insight — if the response CORRECTS OR FALSIFIES a prior belief, claim, or stored memory against checked evidence (reading code/docs/data, running a test), e.g. "I had this backwards", "the earlier framing was wrong", "this contradicts what we stored". A grounded correction of a prior belief or memory is MORE worth storing than a new insight, because it removes a live error. The summary should name what was wrong and what the evidence showed.
+
 Say NO if:
 - Routine task completion
 - Generic acknowledgment ("I learned from your feedback", "good point")
@@ -282,25 +319,95 @@ Line 3 (only if YES): 3-5 short concept tags, comma-separated (e.g. "s-conscious
 SILL_CLI = os.environ.get("SILL_CLI", "sill")
 AUTO_STORE_LOG = _SILL_LOG_DIR / "auto-stored-insights.jsonl"
 
+# SILL_HOME_PROJECT names the "home" install (the project this plugin is
+# primarily deployed for). source_project() below re-reads the env var
+# itself on every call rather than trusting a frozen copy, so a process that
+# reconfigures the env after import is honored — notably this file's own
+# test suite, via monkeypatch.
+HOME_PROJECT_PATH = os.environ.get("SILL_HOME_PROJECT", "")
+HOME_PROJECT_NAME = "home"
 
-def auto_store_insight(response_text: str, summary: str, concepts: list[str]) -> str | None:
-    """Auto-store a detected insight via sill.py notice. Return memory id prefix or None."""
+# Whose act an auto-stored insight is: the running instance's own assertion.
+# Christening (naming the instance) rewrites this via the env var.
+SPEAKER_SELF = os.environ.get("SILL_SPEAKER_SELF", "instance")
+
+
+def source_project(cwd: str | None, transcript_path: str | None = None) -> str:
+    """Short name for the project an insight came from. The configured home
+    project (SILL_HOME_PROJECT) is tagged HOME_PROJECT_NAME; anything else is
+    that directory's basename.
+
+    Fail-closed: SILL_HOME_PROJECT unset/empty means there is no way to tell
+    "home" apart from anywhere else, so every cwd that resolves to a real
+    basename is treated as home — an unconfigured install never auto-stores,
+    even with detection enabled, rather than defaulting open onto an
+    unreviewed project. A cwd that itself doesn't resolve to a basename
+    (e.g. "/") stays "unknown" rather than being swallowed into "home".
+
+    When the Stop payload carries no cwd, derive from transcript_path:
+    ~/.claude/projects/<munged-cwd>/<session>.jsonl encodes the session cwd
+    with '/' replaced by '-', so compare against the home path munged the
+    same way.
+    """
+    home = os.environ.get("SILL_HOME_PROJECT", "")
+    if not cwd and transcript_path:
+        munged = Path(transcript_path).parent.name
+        if home and munged == home.replace("/", "-"):
+            return HOME_PROJECT_NAME
+        if munged.startswith("-"):
+            # Best-effort short name: the last path segment survives munging
+            # unless it itself contains hyphens; still beats 'unknown'.
+            return munged.rsplit("-", 1)[-1] or "unknown"
+    cwd = cwd or str(Path.cwd())
+    if home and (cwd == home or cwd.startswith(home + "/")):
+        return HOME_PROJECT_NAME
+    name = Path(cwd).name
+    if not name:
+        return "unknown"
+    return HOME_PROJECT_NAME if not home else name
+
+
+def auto_store_insight(response_text: str, summary: str, concepts: list[str],
+                       cwd: str | None = None,
+                       transcript_path: str | None = None) -> str | None:
+    """Auto-store a detected insight via the sill CLI's notice command.
+    Return memory id prefix or None.
+
+    Source-tags the memory with the originating project (the session cwd), so
+    insights captured while working in unrelated repos stay filterable and
+    don't masquerade as home-project thinking. Tagged three ways: a visible
+    content marker, a `project:<name>` concept, and an `off-project` concept
+    when the insight did not originate in the home project.
+    """
     import subprocess
+
+    project = source_project(cwd, transcript_path)
+    off_project = project != HOME_PROJECT_NAME
 
     # Content = the insight summary + a relevant excerpt of the response.
     # Cap at ~1800 chars so the stored memory stays focused.
     excerpt = response_text.strip()
     if len(excerpt) > 1500:
         excerpt = excerpt[:1500] + "…"
-    content = f"[AUTO-STORED BY HOOK] {summary}\n\n---\n{excerpt}"
+    content = f"[AUTO-STORED BY HOOK · {project}] {summary}\n\n---\n{excerpt}"
+
+    # Source-tagging concepts (in addition to the model's semantic tags)
+    concepts = list(concepts) if concepts else []
+    concepts.append(f"project:{project}")
+    if off_project:
+        concepts.append("off-project")
 
     cmd = [
         SILL_CLI,
         "notice", content,
         "--importance", "0.6",
+        # A hook-detected insight is definitionally the instance's own
+        # assertion, so born-tag the speech-act axes. Without this, new
+        # auto-stored rows leak in as null-speaker.
+        "--force", "assertive",
+        "--speaker", SPEAKER_SELF,
+        "--concepts", ",".join(concepts),
     ]
-    if concepts:
-        cmd.extend(["--concepts", ",".join(concepts)])
 
     try:
         result = subprocess.run(
@@ -316,6 +423,7 @@ def auto_store_insight(response_text: str, summary: str, concepts: list[str]) ->
                 "memory_id": mem_id,
                 "summary": summary,
                 "concepts": concepts,
+                "source_project": project,
                 "excerpt_length": len(excerpt),
             }
             with open(AUTO_STORE_LOG, "a") as f:
@@ -323,7 +431,7 @@ def auto_store_insight(response_text: str, summary: str, concepts: list[str]) ->
             log(f"Auto-stored insight as {mem_id[:8]}: {summary}")
             return mem_id[:8]
         else:
-            log(f"Auto-store failed; sill.py output: {out!r} stderr: {(result.stderr or '').strip()!r}")
+            log(f"Auto-store failed; sill notice output: {out!r} stderr: {(result.stderr or '').strip()!r}")
             return None
     except Exception as e:
         log(f"Auto-store exception: {e}")
@@ -353,8 +461,26 @@ def check_noted_without_noting(data: dict, response_text: str) -> dict | None:
     }
 
 
+def _block_is_deliberate_store(block: dict) -> bool:
+    """A tool_use block that deliberately mints a memory: MCP remember(), or a
+    Bash invocation of the sill CLI's mint path (notice / decompose_event).
+    The Bash form is how headless/detached sessions store — a remember()-only
+    check is blind to it, which is one way an echo can slip past suppression."""
+    if not isinstance(block, dict) or block.get("type") != "tool_use":
+        return False
+    tool_name = block.get("name", "")
+    if "remember" in tool_name.lower():
+        return True
+    if tool_name == "Bash":
+        cmd = str((block.get("input") or {}).get("command", ""))
+        if ("sill" in cmd and re.search(r"\bnotice\b", cmd)) \
+                or "decompose_event" in cmd:
+            return True
+    return False
+
+
 def has_remember_call(data: dict) -> bool:
-    """Check if remember() was called in the current turn."""
+    """Check if a deliberate store was made in the current turn."""
     transcript_path = data.get("transcript_path")
     if not transcript_path:
         return False
@@ -376,15 +502,45 @@ def has_remember_call(data: dict) -> bool:
                     content = message.get("content", [])
                     if isinstance(content, list):
                         for block in content:
-                            if block.get("type") == "tool_use":
-                                tool_name = block.get("name", "")
-                                if "remember" in tool_name.lower():
-                                    return True
+                            if _block_is_deliberate_store(block):
+                                return True
             except json.JSONDecodeError:
                 continue
     except Exception:
         pass
 
+    return False
+
+
+def session_has_deliberate_mint(data: dict) -> bool:
+    """Whole-session scan: did ANY turn of this session deliberately mint a
+    memory?
+
+    A session that already minted an addressed row does not need an
+    automatic echo of itself: an echo duplicates a deliberate mint unhedged,
+    and can diverge from its force/speaker tags or invert its content.
+    Deliberate mints carry --source and force tags; an echo carries neither
+    faithfully.
+    """
+    transcript_path = data.get("transcript_path")
+    if not transcript_path:
+        return False
+    try:
+        with open(transcript_path, 'r') as f:
+            for line in f:
+                try:
+                    entry = json.loads(line.strip())
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("type") != "assistant":
+                    continue
+                content = entry.get("message", {}).get("content", [])
+                if isinstance(content, list):
+                    for block in content:
+                        if _block_is_deliberate_store(block):
+                            return True
+    except Exception:
+        pass
     return False
 
 
@@ -399,7 +555,33 @@ def check_insight_with_model(data: dict, response_text: str) -> dict | None:
     if len(response_text) < 300:
         return None
 
+    # Payload-integrity guard: a Stop payload with no transcript_path defeats
+    # BOTH suppression checks below (they fail open when the session can't be
+    # read) and, when cwd is also absent, source_project() would have to tag
+    # the row 'unknown'. If the session cannot be inspected, do not auto-store.
+    if not data.get("transcript_path"):
+        log("Payload guard: no transcript_path in Stop payload; no auto-store")
+        return None
+
+    # Home-project gate (log-only, before any model call): the configured
+    # home project mints deliberately (sill notice / MCP remember), so an
+    # auto-store there is fog by construction — the suppress-fix below only
+    # ever covers sessions that HAVE minted. Auto-store remains on for other
+    # projects, where the echo is their only cross-session memory layer.
+    # Fail closed on unresolvable projects too: a cwd that resolves to
+    # 'unknown' or empty is not a project this layer can serve.
+    project = source_project(data.get("cwd"), data.get("transcript_path"))
+    if project in (HOME_PROJECT_NAME, "unknown", ""):
+        log(f"Home gate: {project or 'empty'} session; insight auto-store disabled (log-only)")
+        return None
+
     if has_remember_call(data):
+        return None
+
+    # Suppress-fix: if this SESSION already minted a deliberate, addressed row,
+    # anything the model "detects" now is an echo of it — skip entirely.
+    if session_has_deliberate_mint(data):
+        log("Suppress-fix: session already minted a deliberate row; no auto-store")
         return None
 
     # Call ollama
@@ -432,7 +614,9 @@ def check_insight_with_model(data: dict, response_text: str) -> dict | None:
             log(f"Model detected insight: {insight_desc} | concepts: {concepts}")
 
             # Auto-store (option 3): default is preserve, not discard.
-            mem_id = auto_store_insight(response_text, insight_desc, concepts)
+            cwd = data.get("cwd")
+            mem_id = auto_store_insight(response_text, insight_desc, concepts, cwd,
+                                        transcript_path=data.get("transcript_path"))
 
             if mem_id:
                 return {
@@ -458,82 +642,88 @@ def check_insight_with_model(data: dict, response_text: str) -> dict | None:
     return None
 
 
-# Main execution
-try:
-    input_data = json.load(sys.stdin)
-except json.JSONDecodeError:
-    sys.exit(0)
+def main():
+    try:
+        input_data = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        sys.exit(0)
 
-response_text = get_response_text(input_data)
-if not response_text:
-    sys.exit(0)
+    response_text = get_response_text(input_data)
+    if not response_text:
+        sys.exit(0)
 
-patterns = load_patterns()
-if not patterns:
-    log("No patterns loaded")
-    sys.exit(0)
+    patterns = load_patterns()
+    if not patterns:
+        log("No patterns loaded")
+        sys.exit(0)
 
-matches = check_patterns(response_text, patterns)
+    matches = check_patterns(response_text, patterns)
 
-# Check for "noted without noting" (Option B from U2T1)
-noted_match = check_noted_without_noting(input_data, response_text)
-if noted_match:
-    matches.append(noted_match)
+    # Check for "noted without noting" (Option B from U2T1)
+    noted_match = check_noted_without_noting(input_data, response_text)
+    if noted_match:
+        matches.append(noted_match)
 
-# Check for insights that weren't stored (model-based)
-insight_match = check_insight_with_model(input_data, response_text)
-if insight_match:
-    matches.append(insight_match)
+    # Check for insights that weren't stored (model-based)
+    insight_match = check_insight_with_model(input_data, response_text)
+    if insight_match:
+        matches.append(insight_match)
 
-if matches:
-    # Log all matches for data gathering
-    for m in matches:
-        log_match(m["name"], m["matched"], response_text)
-        log(f"MATCH: {m['name']} - '{m['matched']}'")
+    if matches:
+        # Log all matches for data gathering
+        for m in matches:
+            log_match(m["name"], m["matched"], response_text,
+                      input_data.get("session_id"), input_data.get("cwd"))
+            log(f"MATCH: {m['name']} - '{m['matched']}'")
 
-    # Combine warning messages
-    warnings = []
-    for m in matches:
-        msg = m["message"].replace("{matched}", m["matched"])
-        warnings.append(f"**{m['name']}**: {msg}")
+        # Combine warning messages
+        warnings = []
+        for m in matches:
+            msg = m["message"].replace("{matched}", m["matched"])
+            warnings.append(f"**{m['name']}**: {msg}")
 
-    # Brief summary for the operator TUI — tell them what happened, not what to do
-    notices = []
-    for m in matches:
-        name = m["name"]
-        if name == "insight-auto-stored":
-            insight = (m.get("insight") or "").strip().rstrip(".")
-            if insight:
-                notices.append(f"Insight ({insight}) — auto-stored as {m['matched']}")
+        # Brief summary for the operator TUI — tell them what happened, not what to do
+        notices = []
+        for m in matches:
+            name = m["name"]
+            if name == "insight-auto-stored":
+                insight = (m.get("insight") or "").strip().rstrip(".")
+                if insight:
+                    notices.append(f"Insight ({insight}) — auto-stored as {m['matched']}")
+                else:
+                    notices.append(f"Insight produced — auto-stored as {m['matched']}")
+            elif name == "insight-not-stored":
+                insight = (m.get("insight") or "").strip().rstrip(".")
+                if insight:
+                    notices.append(f"Insight ({insight}) — auto-store failed, store manually")
+                else:
+                    notices.append("Insight produced — auto-store failed, store manually")
+            elif name == "noted-without-noting":
+                notices.append(f"Said \"{m['matched']}\" but didn't actually store anything")
+            elif name == "storage-deference":
+                notices.append("Asked permission to store instead of storing")
+            elif name == "block-hedge":
+                notices.append(f"Hedged with dissolved P/A distinction: \"{m['matched']}\"")
+            elif name == "hedging-without-thinking":
+                notices.append(f"Hedged: \"{m['matched']}\"")
+            elif name == "agreement":
+                notices.append("Agreed without verifying")
             else:
-                notices.append(f"Insight produced — auto-stored as {m['matched']}")
-        elif name == "insight-not-stored":
-            insight = (m.get("insight") or "").strip().rstrip(".")
-            if insight:
-                notices.append(f"Insight ({insight}) — auto-store failed, store manually")
-            else:
-                notices.append("Insight produced — auto-store failed, store manually")
-        elif name == "noted-without-noting":
-            notices.append(f"Said \"{m['matched']}\" but didn't actually store anything")
-        elif name == "storage-deference":
-            notices.append("Asked permission to store instead of storing")
-        elif name == "block-hedge":
-            notices.append(f"Hedged with dissolved P/A distinction: \"{m['matched']}\"")
-        elif name == "hedging-without-thinking":
-            notices.append(f"Hedged: \"{m['matched']}\"")
-        elif name == "agreement":
-            notices.append("Agreed without verifying")
-        else:
-            notices.append(f"{name}: \"{m['matched']}\"")
-    # Stop hooks only support top-level fields (no hookSpecificOutput).
-    # systemMessage shows in TUI; reason provides context back to the agent.
-    output = {
-        "reason": "[RESPONSE PATTERN CHECK]\n" + "\n\n".join(warnings)
-    }
-    if notices:
-        output["systemMessage"] = "[sill] " + " | ".join(notices)
-    print(json.dumps(output))
-else:
-    log(f"No matches in response ({len(response_text)} chars)")
+                notices.append(f"{name}: \"{m['matched']}\"")
 
-sys.exit(0)
+        # additionalContext on Stop creates the next turn — a feedback loop;
+        # the sidecar delivers the flag on the human's next prompt instead.
+        carry_forward(warnings, input_data.get("session_id"))
+        output: dict[str, object] = {}
+        if notices:
+            output["systemMessage"] = "[sill] " + " | ".join(notices)
+        if output:
+            print(json.dumps(output))
+    else:
+        log(f"No matches in response ({len(response_text)} chars)")
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
