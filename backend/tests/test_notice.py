@@ -57,3 +57,16 @@ def test_hook_call_shape_parses():
             "--concepts", "a,b"]
     a = p.parse_args(argv)
     assert a.speaker == "instance" and a.importance == 0.6
+
+
+def test_main_success_prints_receipt_and_returns_zero(capsys):
+    with mock.patch.object(sill, "_query_db", side_effect=_fake_query):
+        rc = sill.main(["notice", "a fact", "--speaker", "Ada"])
+    out = capsys.readouterr().out
+    assert rc == 0 and out.startswith("Stored: ")
+
+
+def test_main_failure_returns_one(capsys):
+    with mock.patch.object(sill, "_query_db", return_value=[]):
+        rc = sill.main(["notice", "a fact", "--speaker", "Ada"])
+    assert rc == 1 and "Failed to store" in capsys.readouterr().out

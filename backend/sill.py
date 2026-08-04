@@ -5,10 +5,10 @@ The Sill — mint path for durable memory.
   notice(content, type, concepts, importance, force, speaker, source, ...)
       Store something important as a speech act: what it says, and who said
       it with what illocutionary force (assertive/directive/commissive/
-      expressive/declaration — see docs/memory-as-speech-acts.md).
+      expressive/declaration).
 
-Used by CLI hooks, Gnomon, and any future agent. All queries go through
-subprocess to docker exec psql.
+Used by CLI hooks, detached workers, and any future agent. All queries go
+through subprocess to docker exec psql.
 
 orient/check/stance are house- and ollama-bound and are deferred to Plan 5 —
 this module carries the mint path only.
@@ -181,11 +181,11 @@ def notice(content: str, memory_type: str = "semantic",
 
     Handles dedup (create_memory does this), concept linking, and logging.
 
-    Speech-act tags (see docs/memory-as-speech-acts.md, migration 001):
+    Speech-act tags (migration 001):
       force   — illocutionary force: assertive/directive/commissive/expressive/declaration.
                 Only 'assertive' is truth-scored; the others succeed by
                 complied/kept/sincere/felicitous. Default None = untagged (≈ assertive).
-      speaker — whose act this records (perspective axis). e.g. William, Sili, an author.
+      speaker — whose act this records (perspective axis). e.g. a person's name, the instance's name, or a source author.
 
     Origin (source_attribution):
       source  — where this came from, as an address a later reader can open:
@@ -289,7 +289,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_notice.add_argument("--source-kind", default=None,
                           help="Override the inferred kind (file/url). e.g. beat, twitter, book.")
     p_notice.add_argument("--source-label", default=None,
-                          help="Human label for the source, e.g. 'sili-115'.")
+                          help="Human label for the source, e.g. 'journal-042'.")
     p_notice.add_argument("--receipt-to", default=None, metavar="FILE",
                           help="Journal file whose literal placeholder line "
                                "('Stored: MINT-PENDING — no receipt yet') the "
