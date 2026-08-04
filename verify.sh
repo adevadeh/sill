@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# verify.sh — four smoke checks for an installed Sill.
+# verify.sh — five smoke checks for an installed Sill.
 #
-# Exits 0 only if all four checks pass. Designed to be safe to re-run.
+# Exits 0 only if all five checks pass. Designed to be safe to re-run.
 #
 # Checks:
 #   1. docker compose ps shows db + embeddings healthy.
 #   2. sill-mcp --help exits 0.
 #   3. SELECT count(*) FROM memories returns >= 22 (seed loaded).
 #   4. plugin/hooks/response-patterns.py exits 0 on a canned Stop event.
+#   5. schema_migrations matches backend/migrations/ (schema level current).
 
 set -euo pipefail
 
@@ -31,7 +32,7 @@ say() {
 }
 
 # --- check 1 -------------------------------------------------------------------
-say "Check 1/4: docker compose services healthy"
+say "Check 1/5: docker compose services healthy"
 for svc in db embeddings; do
   status="$(cd "$SILL_DIR/backend" && docker compose -f "$COMPOSE_FILE" ps --format json "$svc" 2>/dev/null | python3 -c '
 import json, sys
@@ -53,7 +54,7 @@ for line in raw.splitlines():
 done
 
 # --- check 2 -------------------------------------------------------------------
-say "Check 2/4: sill-mcp --help"
+say "Check 2/5: sill-mcp --help"
 if ! command -v sill-mcp >/dev/null 2>&1; then
   fail "sill-mcp not on PATH (is the backend installed and ~/.local/bin on PATH?)"
 fi
@@ -64,7 +65,7 @@ else
 fi
 
 # --- check 3 -------------------------------------------------------------------
-say "Check 3/4: seed loaded (memories count >= 22)"
+say "Check 3/5: seed loaded (memories count >= 22)"
 count="$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
   "SELECT count(*) FROM memories WHERE archived_at IS NULL" 2>/dev/null || echo 0)"
 count="$(printf '%s' "$count" | tr -d '[:space:]')"
@@ -74,7 +75,7 @@ fi
 pass "memories count is $count"
 
 # --- check 4 -------------------------------------------------------------------
-say "Check 4/4: response-patterns hook parses a canned Stop event"
+say "Check 4/5: response-patterns hook parses a canned Stop event"
 # The hook reads last_assistant_message (Codex Stop shape) and exits 0 when
 # the text contains no flagged patterns. We expect 0 here.
 canned='{"hook_event_name":"Stop","last_assistant_message":"Verify smoke check: a plain sentence with no flagged patterns."}'
@@ -83,5 +84,20 @@ if printf '%s' "$canned" | python3 "$SILL_DIR/plugin/hooks/response-patterns.py"
 else
   fail "response-patterns.py rejected a canned Stop event"
 fi
+
+# --- check 5 -------------------------------------------------------------------
+say "Check 5/5: schema level current"
+want="$(ls "$SILL_DIR"/backend/migrations/[0-9][0-9][0-9]_*.sql 2>/dev/null | wc -l | tr -d '[:space:]')"
+have="$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
+  "SELECT count(*) FROM schema_migrations" 2>/dev/null | tr -d '[:space:]' || echo 0)"
+if [[ -z "$have" || "$have" -lt "$want" ]]; then
+  fail "schema_migrations has ${have:-0} of $want migrations (run ./upgrade.sh)"
+fi
+speaker_col="$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
+  "SELECT count(*) FROM information_schema.columns WHERE table_name='memories' AND column_name='speaker'" 2>/dev/null | tr -d '[:space:]')"
+if [[ "$speaker_col" != "1" ]]; then
+  fail "memories.speaker column missing despite stamp — run ./upgrade.sh and report if it recurs"
+fi
+pass "schema at level $have/$want; speech-act columns present"
 
 printf '\nAll checks passed.\n'

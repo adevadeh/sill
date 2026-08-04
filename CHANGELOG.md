@@ -3,6 +3,30 @@
 All notable changes to Sill are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## v0.2.0-dev — unreleased
+
+### Added
+
+- **Schema migration lane** — versioned migrations under `backend/migrations/`
+  (ported from the upstream agi-memory research project, 020–026), a
+  `schema_migrations` tracking table stamped at initdb for fresh installs,
+  `./upgrade.sh` (backup-first, `--dry-run`), verify.sh check 5, and a CI job
+  asserting fresh init == baseline + upgrade (pg_dump diff).
+- **Speech-act columns** — nullable `force` and `speaker` on `memories`;
+  reuse-event provenance table snapshotting both at detection time.
+- **session_activity** — per-project activity clock for the spontaneous-recall
+  time header (hook wiring follows in a later 0.2.0 change).
+- **Guards** — archive-status invariant trigger (`archived_at` authoritative);
+  connect phantom-node guard (`discover_relationship` refuses ids with no
+  memories row).
+
+### Fixed
+
+- `get_embedding` no longer fails on content containing literal backslashes
+  (encoding-safe `convert_to` replaces the escape-interpreting `::bytea` cast).
+- Access telemetry decoupled from importance (removed the compounding
+  importance-on-access trigger path; `touch_memory_access` is pure telemetry).
+
 ## v0.1.0 — 2026-06-03
 
 Initial extraction from the agi-memory research project.
