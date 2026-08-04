@@ -60,10 +60,21 @@ jobs:
           # Wait for the entrypoint's "init process complete" line, NOT pg_isready:
           # 000_schema.sql's seed block stalls ~150s retrying the compose-only
           # embeddings host, and pg_isready answers the temp init server mid-run.
+          # On timeout: name the container and dump its logs (agent-legible failure).
           for c in fresh base; do
+            ok=0
             for i in $(seq 1 140); do
-              docker logs "$c" 2>&1 | grep -q "PostgreSQL init process complete" && break
+              docker logs "$c" 2>&1 | grep -q "PostgreSQL init process complete" && { ok=1; break; }
               sleep 3
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::container '$c' never logged init completion within 420s — its init logs follow; look for a failed or stalled init script"
+              docker logs "$c" 2>&1 | tail -60
+              exit 1
+            fi
+            # Brief retry: the real server starts a moment after the temp one stops.
+            for i in 1 2 3 4 5; do
+              docker exec "$c" pg_isready -U sill -d sill && break || sleep 2
             done
             docker exec "$c" pg_isready -U sill -d sill
           done
