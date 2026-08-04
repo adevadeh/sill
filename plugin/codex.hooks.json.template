@@ -31,6 +31,28 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/stored-slot-guard.py",
+            "statusMessage": "Checking receipt-shaped ids against the store",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/tool-type-witness.py",
+            "statusMessage": "Checking carrying-act claims",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
