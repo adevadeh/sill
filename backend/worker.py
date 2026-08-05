@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AGI Workers
+Sill Workers
 
 This module contains the maintenance worker (subconscious substrate upkeep):
    - Runs `run_subconscious_maintenance()` on its own schedule (`should_run_maintenance()`)

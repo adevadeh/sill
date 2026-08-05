@@ -50,9 +50,11 @@ on a fresh install; override these only if you renamed the container,
 user, or database from the shipped defaults.
 
 ```bash
-grep -rn "agi_user\|agi_db" plugin/ backend/*.py backend/scripts/*.py
+grep -rn "agi_user\|agi_db\|agi_memory" plugin/ backend/*.py backend/scripts/*.py
 # -> no output. Nothing in this repo still defaults to the old
-#    agi-memory-project names.
+#    agi-memory-project names. (This intentionally doesn't grep for the
+#    hyphenated "agi-memory" — that string legitimately appears in this
+#    repo's own "Ported from agi-memory ..." provenance comments.)
 ```
 
 ---
@@ -275,7 +277,7 @@ never blocked:
   matter for your own project.
 
 **When it fires:** `PreToolUse` matching
-`mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command`
+`mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command`
 (`exec`/`exec_command` are Codex's shell tool names; see `_harness.py`
 for the full harness-normalization mapping).
 
@@ -492,7 +494,7 @@ hook is non-blocking; it just asks "do you have the state you're
 describing, or are you matching human convention?"
 
 **When it fires:** `PreToolUse` matching
-`mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|apply_patch|Edit|Write`
+`mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|apply_patch|Edit|Write`
 (`exec`/`exec_command`/`apply_patch` are Codex's shell/write tool names;
 see `_harness.py` for the full harness-normalization mapping).
 

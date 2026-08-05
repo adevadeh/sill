@@ -284,7 +284,7 @@ doc described one; it was fixed in the hooks' own code before it was
 fixed here). Confirm for yourself:
 
 ```bash
-grep -rn "agi_user\|agi_db\|agi_password" plugin/ backend/*.py backend/scripts/*.py
+grep -rn "agi_user\|agi_db\|agi_password\|agi_memory" plugin/ backend/*.py backend/scripts/*.py
 # -> no output
 ```
 

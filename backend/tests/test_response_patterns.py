@@ -76,7 +76,7 @@ def test_deliberate_mint_detector_sees_bash_notice():
 # Codex-side deliberate mint was invisible and the echo suppression silently
 # never engaged. Parity here is the regression that catches that.
 
-MINT_CMD = "sill notice 'a deliberately minted fact' --force assertive --speaker Sili"
+MINT_CMD = "sill notice 'a deliberately minted fact' --force assertive --speaker instance"
 
 CLAUDE_MINT_TRANSCRIPT = "\n".join([
     json.dumps({"type": "user", "message": {"content": "please store that"}}),
