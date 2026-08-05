@@ -31,6 +31,7 @@ run on every tool call in every session; an exception escaping this
 module is a broken harness, not a broken test.
 """
 import json
+import os
 from typing import Iterator, Literal
 
 Harness = Literal["claude", "codex", "unknown"]
@@ -198,15 +199,55 @@ def written_path(payload: object) -> str | None:
 
 
 def _patch_added_text(patch: str) -> str | None:
-    lines = [line[1:] for line in patch.splitlines() if line.startswith("+")]
+    """Added ("+") lines, scoped to the FIRST file header only — the
+    same file written_path returns. A multi-file patch (*** Update
+    File: a.md / ... / *** Update File: b.md / ...) would otherwise
+    return every file's additions concatenated, so a caller pairing this
+    with written_path could judge file A's scope against file B's
+    content. Stops collecting at the second header line (if any); a
+    patch with 0 or 1 headers is unaffected — both are already
+    unambiguous ("no file" or "the one file"), same as before this
+    scoping was added.
+    """
+    lines = []
+    headers_seen = 0
+    for line in patch.splitlines():
+        if any(line.startswith(header) for header in _PATCH_HEADERS):
+            headers_seen += 1
+            if headers_seen >= 2:
+                break  # second file's header — stop; stay scoped to the first
+            continue
+        if line.startswith("+"):
+            lines.append(line[1:])
     return "\n".join(lines) if lines else None
 
 
+def _multi_edit_text(ti: dict) -> str | None:
+    """MultiEdit's new_string values, newline-joined. MultiEdit nests
+    its edits under an "edits" list instead of Edit's flat top-level
+    new_string: {"file_path": ..., "edits": [{"old_string": ...,
+    "new_string": ...}, ...]}. tool_kind classifies both as "edit", but
+    only Edit's payload has a top-level new_string — reading that key
+    directly for MultiEdit silently returns None for every call.
+    A non-list "edits" (missing, wrong type) returns None so the caller
+    falls back to the flat Edit shape; a malformed entry (not a dict, or
+    a missing/non-string new_string) is skipped rather than raising.
+    """
+    edits = ti.get("edits")
+    if not isinstance(edits, list):
+        return None
+    parts = [text for text in (
+        _as_str(edit.get("new_string")) for edit in edits if isinstance(edit, dict)
+    ) if text is not None]
+    return "\n".join(parts) if parts else None
+
+
 def written_text(payload: object) -> str | None:
-    """The text a Write/Edit (Claude) or apply_patch (Codex) call
-    introduces: Write's full content, Edit's new_string (what's being
-    introduced, not what it replaces), or apply_patch's added ("+")
-    lines across the whole patch body.
+    """The text a Write/Edit/MultiEdit (Claude) or apply_patch (Codex)
+    call introduces: Write's full content, Edit's new_string (what's
+    being introduced, not what it replaces), MultiEdit's new_string
+    values newline-joined (see _multi_edit_text), or apply_patch's added
+    ("+") lines scoped to the first file header (see _patch_added_text).
     """
     try:
         kind = tool_kind(payload)
@@ -219,7 +260,8 @@ def written_text(payload: object) -> str | None:
         if kind == "write":
             return _as_str(ti.get("content"))
         if kind == "edit":
-            return _as_str(ti.get("new_string"))
+            multi = _multi_edit_text(ti)
+            return multi if multi is not None else _as_str(ti.get("new_string"))
         return None
     except Exception:
         return None
@@ -254,6 +296,15 @@ def _parse_call_arguments(raw: object) -> object:
 
 def _iter_transcript_records(path: object) -> list:
     out: list = []
+    # open() treats an int as a raw OS file descriptor, not a filename —
+    # an int path (e.g. True, which is 1, which is stdout) would open
+    # that live fd instead of failing, and the `with` block below would
+    # then close it on the way out. That closes a fd the process needs
+    # with no exception ever reaching the `except` below to report it.
+    # Reject anything that isn't an actual path before open() ever sees
+    # it, so this failure mode can't reach the open() call at all.
+    if not isinstance(path, (str, os.PathLike)):
+        return out
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
@@ -319,11 +370,12 @@ def iter_transcript_tool_uses(path: object) -> Iterator[dict]:
       JSON-or-raw `arguments`) or payload.type=="custom_tool_call"
       (id=call_id, name, input taken as-is).
 
-    Total: a missing file, unparseable path, undecodable line, or any
-    other read/parse failure yields nothing rather than raising. Built
-    eagerly (not a generator) so a failure can never surface mid-iteration
-    either — the returned iterator is exhausted-safe from the moment this
-    function returns.
+    Total: a non-path argument (including an int, which open() would
+    treat as a raw fd rather than a filename — see _iter_transcript_records),
+    a missing file, undecodable line, or any other read/parse failure
+    yields nothing rather than raising. Built eagerly (not a generator)
+    so a failure can never surface mid-iteration either — the returned
+    iterator is exhausted-safe from the moment this function returns.
     """
     try:
         return iter(_iter_transcript_records(path))

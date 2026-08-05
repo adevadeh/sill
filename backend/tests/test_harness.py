@@ -1,6 +1,8 @@
 """Harness normalization. Pure functions over payload dicts; no I/O."""
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,16 @@ CLAUDE_WRITE = {"tool_name": "Write",
                 "tool_input": {"file_path": "a.md", "content": "x"}}
 CODEX_PATCH = {"tool_name": "apply_patch",
                "tool_input": {"input": "*** Update File: a.md\n+x\n"}}
+CLAUDE_EDIT = {"tool_name": "Edit",
+               "tool_input": {"file_path": "a.md", "old_string": "foo", "new_string": "bar"}}
+CLAUDE_MULTI_EDIT = {"tool_name": "MultiEdit",
+                      "tool_input": {"file_path": "a.md", "edits": [
+                          {"old_string": "foo", "new_string": "bar"},
+                          {"old_string": "baz", "new_string": "qux"},
+                      ]}}
+CODEX_MULTI_FILE_PATCH = {"tool_name": "apply_patch",
+                           "tool_input": {"input": "*** Update File: a.md\n+x\n"
+                                                    "*** Update File: b.md\n+y\n"}}
 
 
 @pytest.mark.parametrize("payload", [CLAUDE_BASH, CODEX_EXEC, CODEX_EXEC_CMD])
@@ -30,6 +42,42 @@ def test_shell_kind_across_both_harnesses(payload):
 def test_write_kind_across_both_harnesses(payload):
     assert h.tool_kind(payload) in ("write", "edit")
     assert h.written_path(payload) == "a.md"
+
+
+def test_written_text_reads_flat_edit_new_string():
+    assert h.written_text(CLAUDE_EDIT) == "bar"
+
+
+def test_written_text_reads_multi_edit_nested_new_strings():
+    """MultiEdit nests its edits under an "edits" list instead of Edit's
+    flat top-level new_string, but tool_kind classifies both as "edit" —
+    so the natural `if tool_kind(p) == "edit": written_text(p)` caller
+    must not silently see nothing for every MultiEdit call."""
+    text = h.written_text(CLAUDE_MULTI_EDIT)
+    assert text is not None
+    assert "bar" in text
+    assert "qux" in text
+
+
+def test_written_text_multi_edit_skips_malformed_entries_without_raising():
+    payload = {"tool_name": "MultiEdit",
+               "tool_input": {"file_path": "a.md", "edits": [
+                   "not a dict",
+                   {"old_string": "foo"},  # missing new_string
+                   {"old_string": "baz", "new_string": "qux"},
+               ]}}
+    assert h.written_text(payload) == "qux"
+
+
+def test_multi_file_patch_text_is_scoped_to_the_path_it_reports():
+    """A patch touching two files must not let file B's content answer
+    for file A's path: written_path reports the first file only, and
+    written_text must be scoped to that same file, not the whole patch
+    body — otherwise a caller checking 'is this path in scope, and does
+    its text contain X' can judge file A's scope against file B's
+    content."""
+    assert h.written_path(CODEX_MULTI_FILE_PATCH) == "a.md"
+    assert h.written_text(CODEX_MULTI_FILE_PATCH) == "x"
 
 
 def test_unknown_tool_is_other_not_a_crash():
@@ -68,3 +116,40 @@ def test_never_raises_on_garbage():
         assert h.tool_kind(junk) == "other"
         assert h.shell_command(junk) is None
         assert h.written_path(junk) is None
+
+
+def test_iter_transcript_tool_uses_returns_empty_for_non_path_types():
+    """open() treats an int as a raw OS file descriptor, not a filename
+    — isinstance-reject before it ever reaches open(), for every
+    non-path shape, not just int."""
+    for junk in [1, True, False, None, [], {}, 3.14, ["a.jsonl"]]:
+        assert list(h.iter_transcript_tool_uses(junk)) == []
+
+
+def test_iter_transcript_tool_uses_rejects_int_path_without_closing_stdout():
+    """True == 1 == stdout's fd. open(True, ...) used to open that live
+    fd (open() treats an int argument as a raw fd, not a filename), and
+    the `with` block closed it on the way out — silently killing the
+    process's stdout with no exception ever reaching the broad
+    `except Exception` that wraps the call, since closing a fd doesn't
+    raise. Run in a subprocess so the regression's actual symptom
+    (stdout dies, a later print() vanishes, the interpreter exits
+    nonzero at shutdown trying to flush the dead fd) is caught
+    behaviorally — an isinstance assertion alone wouldn't catch a
+    reintroduced call path that still reaches open() with an int.
+    """
+    harness_path = HOOKS / "_harness.py"
+    code = (
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('_harness', {str(harness_path)!r})\n"
+        "h = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(h)\n"
+        "list(h.iter_transcript_tool_uses(True))\n"
+        "print('SENTINEL_OK')\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert proc.returncode == 0, f"stderr: {proc.stderr!r}"
+    assert "SENTINEL_OK" in proc.stdout
