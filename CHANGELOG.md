@@ -33,6 +33,16 @@ All notable changes to Sill are recorded here. Format loosely follows
   (house-internal drafts; never executed at runtime). The shipped image now
   contains only the baseline schema and the numbered migrations.
 
+### Credit
+
+- The `get_embedding` backslash fix above was diagnosed and submitted first
+  by external contributor Paul Taysom in PR #2 (2026-06-09) — one week after
+  receiving the v0.1.0 install, and one month before this project
+  rediscovered the identical bug independently and shipped its own fix as
+  `backend/migrations/004_get_embedding_backslash_fix.sql`. His `schema.sql`
+  hunk (the baseline fix, not just the upgrade migration) is absorbed here
+  with authorship preserved.
+
 ## v0.1.0 — 2026-06-03
 
 Initial extraction from the agi-memory research project.
