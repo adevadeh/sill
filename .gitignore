@@ -51,3 +51,6 @@ backups/
 charter.md
 journal/
 notes/
+
+# Runtime memory-health snapshots (local state, machine-specific)
+backend/memory_health_history.jsonl
