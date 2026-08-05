@@ -28,6 +28,9 @@ dev = [
   "pytest>=7.4.3",
   "pytest-asyncio>=0.21.1",
 ]
+diagnostics = [
+  "numpy>=1.24",
+]
 
 [project.scripts]
 sill = "sill_cli:main"
@@ -45,6 +48,8 @@ py-modules = [
   "worker",
   "rabbit_bridge",
   "beat_worker",
+  "memory_health",
+  "ingest_md_memories",
 ]
 include-package-data = false
 

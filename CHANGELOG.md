@@ -136,6 +136,14 @@ All notable changes to Sill are recorded here. Format loosely follows
   verbatim with a timestamp, in the human's own words, opens by saying
   plainly that the person can point their Sill at anything, and
   deliberately never says what a Sill is for.
+- **Contributor tools** — `backend/memory_health.py` (TwoNN intrinsic-dimension,
+  distance-concentration, and near-duplicate metrics over the memory corpus,
+  with run-to-run drift detection) and `backend/ingest_md_memories.py`
+  (bridges the file-based `.md` memory store into the Postgres `memories`
+  table, so the spontaneous-recall hook — which only queries the DB — can
+  surface distilled memories, not just the seed corpus). Contributed by
+  Paul Taysom ([@taysom](https://github.com/taysom)) via pull request #3
+  (`feat/memory-tools`), filed 2026-06-12 and merged 2026-08-05.
 
 ### Fixed
 
@@ -173,6 +181,18 @@ All notable changes to Sill are recorded here. Format loosely follows
   `sill_mcp_server.py`'s `--dsn` default read `AGI_DB_DSN` (now
   `SILL_DB_DSN`); `worker.py`'s `--mode` default read `AGI_WORKER_MODE`
   (now `SILL_WORKER_MODE`).
+- The two contributor tools above (2026-08-05) had two packaging gaps that
+  did not ship: neither `memory_health` nor `ingest_md_memories` was listed
+  in `pyproject.toml`'s `py-modules` (the same omission `beat_worker.py` hit
+  before it, commit `8be59b4`), so a `pip install` of this project would not
+  have installed either module; and `memory_health.py` imports
+  `numpy`, which was declared nowhere in `pyproject.toml` and is not pulled
+  in transitively, so a clean install would have failed on import. Both
+  modules are now in `py-modules`; `numpy` is declared under a new optional
+  `diagnostics` extra (`pip install -e '.[diagnostics]'`) rather than a hard
+  dependency, since `memory_health.py` is a diagnostic tool, not on the core
+  memory-store path; `memory_health.py` now raises a clear install-hint
+  `ImportError` instead of a bare one when numpy is absent.
 
 ### Changed
 

@@ -36,7 +36,18 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError as exc:
+    raise ImportError(
+        "memory_health.py needs numpy, which is an optional dependency (this "
+        "is a diagnostic tool, not on the core memory-store path, so a plain "
+        "install of sill-memory does not pull it in). Install it with:\n"
+        "    pip install -e '.[diagnostics]'\n"
+        "or, into an existing environment:\n"
+        "    pip install numpy"
+    ) from exc
+
 import psycopg2
 
 BACKEND_DIR = Path(__file__).resolve().parent
