@@ -128,6 +128,17 @@ All notable changes to Sill are recorded here. Format loosely follows
 - `track-reuse` joined Codex transcript MCP names without the separator
   (`mcp__sillrecall_batch`), working only because a downstream filter used
   a substring test.
+- `response-patterns`' deliberate-mint suppression never engaged on Codex.
+  Both mint checks walked only Claude's `assistant`/`tool_use` transcript
+  shape and recognized only the tool name `Bash`, so on a Codex session
+  they returned "no mint" unconditionally — every Codex-side mint (MCP
+  `remember`, or `exec`/`exec_command` running `sill notice`) was
+  invisible, and insight auto-store could echo a row the session had
+  already deliberately stored. Now normalized through `_harness.py`.
+- `response-patterns`' turn-scoped mint check stopped at the last tool
+  result instead of the typed prompt (Claude writes tool results as
+  `user` entries too), so a mint made earlier in the same turn, behind any
+  later tool call, read as "no mint".
 - A multi-file `apply_patch` was inspected only for its first file, so
   content in later files passed guards unexamined.
 - `upgrade.sh` had no Codex path, so upgraded installs silently kept the

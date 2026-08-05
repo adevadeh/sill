@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 HOOK = Path(__file__).resolve().parents[2] / "plugin" / "hooks" / "response-patterns.py"
 spec = importlib.util.spec_from_file_location("response_patterns", HOOK)
 rp = importlib.util.module_from_spec(spec)
@@ -61,6 +63,170 @@ def test_deliberate_mint_detector_sees_bash_notice():
     assert rp._block_is_deliberate_store(block2)
     block3 = {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}
     assert not rp._block_is_deliberate_store(block3)
+
+
+# --- Echo suppression must see a Codex session's mints too ------------------
+#
+# The two checks below read the session transcript, whose schema differs by
+# harness, and this hook is registered on Stop with no matcher — the same file
+# fires on Claude AND Codex (plugin/codex.hooks.json.template, merged into both
+# settings files by install.sh). Before _harness was wired in, both functions
+# walked only Claude's assistant/tool_use shape and recognized only the tool
+# name "Bash", so on Codex they returned False unconditionally: every
+# Codex-side deliberate mint was invisible and the echo suppression silently
+# never engaged. Parity here is the regression that catches that.
+
+MINT_CMD = "sill notice 'a deliberately minted fact' --force assertive --speaker Sili"
+
+CLAUDE_MINT_TRANSCRIPT = "\n".join([
+    json.dumps({"type": "user", "message": {"content": "please store that"}}),
+    json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "id": "toolu_1", "name": "Bash",
+         "input": {"command": MINT_CMD}},
+    ]}}),
+]) + "\n"
+
+# Codex spells the same call exec_command: a response_item/function_call whose
+# arguments arrive as a JSON-encoded string.
+CODEX_MINT_TRANSCRIPT = "\n".join([
+    json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "please store that"}]}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "function_call", "call_id": "call_1", "name": "exec_command",
+        "arguments": json.dumps({"command": MINT_CMD})}}),
+]) + "\n"
+
+# Codex's other shape for a shell call: exec arrives as a custom_tool_call
+# whose input is a bare freeform string, not a dict with a "command" key.
+CODEX_EXEC_MINT_TRANSCRIPT = "\n".join([
+    json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "please store that"}]}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "custom_tool_call", "call_id": "call_1", "name": "exec",
+        "input": MINT_CMD}}),
+]) + "\n"
+
+CODEX_MCP_MINT_TRANSCRIPT = "\n".join([
+    json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "please store that"}]}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "function_call", "call_id": "call_1",
+        "namespace": "mcp__sill", "name": "remember",
+        "arguments": json.dumps({"content": "a deliberately minted fact"})}}),
+]) + "\n"
+
+# Same Codex shapes, no mint: a plain shell call and a plain MCP read. These
+# must stay False, or "recognizes Codex" would just be "returns True on Codex".
+CODEX_NO_MINT_TRANSCRIPT = "\n".join([
+    json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "what changed?"}]}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "function_call", "call_id": "call_1", "name": "exec_command",
+        "arguments": json.dumps({"command": "git status"})}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "custom_tool_call", "call_id": "call_2", "name": "exec",
+        "input": "ls -la"}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "function_call", "call_id": "call_3",
+        "namespace": "mcp__sill", "name": "recall_batch", "arguments": "{}"}}),
+]) + "\n"
+
+
+def _transcript(tmp_path, text):
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(text)
+    return {"transcript_path": str(path)}
+
+
+@pytest.mark.parametrize("transcript", [
+    CLAUDE_MINT_TRANSCRIPT,
+    CODEX_MINT_TRANSCRIPT,
+    CODEX_EXEC_MINT_TRANSCRIPT,
+    CODEX_MCP_MINT_TRANSCRIPT,
+], ids=["claude-bash", "codex-exec_command", "codex-exec", "codex-mcp-remember"])
+def test_deliberate_mint_is_seen_on_both_harnesses(transcript, tmp_path):
+    data = _transcript(tmp_path, transcript)
+    assert rp.has_remember_call(data), "turn-scoped check missed the mint"
+    assert rp.session_has_deliberate_mint(data), "session-scoped check missed the mint"
+
+
+@pytest.mark.parametrize("check", [rp.has_remember_call, rp.session_has_deliberate_mint],
+                         ids=["turn", "session"])
+def test_codex_session_without_a_mint_is_not_treated_as_minted(check, tmp_path):
+    assert not check(_transcript(tmp_path, CODEX_NO_MINT_TRANSCRIPT))
+
+
+def test_codex_mint_in_an_earlier_turn_is_session_visible_but_not_turn_visible(tmp_path):
+    """The two checks answer different questions, and the Codex walk must
+    keep them different: a mint before the last user message is a session
+    mint (echo suppression's actual trigger) but not a current-turn one."""
+    data = _transcript(
+        tmp_path,
+        CODEX_MINT_TRANSCRIPT + "\n".join([
+            json.dumps({"type": "response_item", "payload": {
+                "type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": "now something else"}]}}),
+            json.dumps({"type": "response_item", "payload": {
+                "type": "function_call", "call_id": "call_2", "name": "exec_command",
+                "arguments": json.dumps({"command": "git status"})}}),
+        ]) + "\n")
+    assert not rp.has_remember_call(data)
+    assert rp.session_has_deliberate_mint(data)
+
+
+# --- The turn boundary is the TYPED prompt, not any "user" entry -----------
+#
+# Claude writes tool results as "user" entries, so breaking on every "user"
+# entry stopped the turn scan at the last tool result: a mint made earlier in
+# the same turn, with any tool call after it, read as "no mint" — a false
+# noted-without-noting warning, and one fewer brace on the auto-store path.
+# Codex never had this ambiguity (its results are function_call_output
+# records), so this is the Claude side catching up to the Codex walk, not a
+# loosening of it: the pair below pins both directions at once.
+
+def _claude_turn(*blocks) -> str:
+    return json.dumps({"type": "assistant", "message": {"content": list(blocks)}})
+
+
+CLAUDE_MINT_BEHIND_A_TOOL_RESULT = "\n".join([
+    json.dumps({"type": "user", "message": {"content": "store that, then check git"}}),
+    _claude_turn({"type": "tool_use", "id": "toolu_1", "name": "Bash",
+                  "input": {"command": MINT_CMD}}),
+    json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "Stored: ..."}]}}),
+    _claude_turn({"type": "tool_use", "id": "toolu_2", "name": "Bash",
+                  "input": {"command": "git status"}}),
+    json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "toolu_2", "content": "clean"}]}}),
+    _claude_turn({"type": "text", "text": "Stored, and the tree is clean."}),
+]) + "\n"
+
+
+def test_claude_mint_earlier_in_the_same_turn_is_still_turn_visible(tmp_path):
+    data = _transcript(tmp_path, CLAUDE_MINT_BEHIND_A_TOOL_RESULT)
+    assert rp.has_remember_call(data), (
+        "the turn scan stopped at a tool_result 'user' entry instead of the "
+        "typed prompt, so it never reached this turn's own mint")
+    assert rp.session_has_deliberate_mint(data)
+
+
+@pytest.mark.parametrize("boundary", [
+    json.dumps({"type": "user", "message": {"content": "now something else"}}),
+    json.dumps({"type": "user", "message": {"content": [
+        {"type": "text", "text": "now something else"}]}}),
+], ids=["string-content", "text-block-content"])
+def test_claude_mint_in_an_earlier_turn_is_not_turn_visible(boundary, tmp_path):
+    """The boundary must still BE a boundary — in both shapes a typed Claude
+    prompt takes — or the fix above would just be its deletion."""
+    data = _transcript(tmp_path, CLAUDE_MINT_BEHIND_A_TOOL_RESULT + boundary + "\n" +
+                       _claude_turn({"type": "tool_use", "id": "toolu_3", "name": "Bash",
+                                     "input": {"command": "git status"}}) + "\n")
+    assert not rp.has_remember_call(data)
+    assert rp.session_has_deliberate_mint(data)
 
 
 def _run(payload, env_extra=None):

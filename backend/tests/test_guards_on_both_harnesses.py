@@ -72,7 +72,13 @@ def _fake_docker_env(tmp_path, reply="0"):
 # report but had no automated tripwire — and state-language-check's
 # apply_patch key already broke silently once (it read tool_input["command"],
 # which apply_patch never sets, until that report's fix). These four close
-# the gap so all six rewired hooks are pinned.
+# the gap so all six hooks task 2 rewired are pinned.
+#
+# response-patterns.py was rewired later (its two deliberate-mint checks
+# walked Claude's transcript shape only) and is the seventh _harness
+# consumer; its parity coverage lives in test_response_patterns.py, where
+# the checks can be called directly — it's a Stop hook whose verdict is a
+# suppressed auto-store, with no stdout decision to compare here.
 
 RECEIPT_TEXT = "Stored: deadbeef-1111-2222-3333-444455556666"
 

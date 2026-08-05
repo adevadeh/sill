@@ -103,9 +103,13 @@ for the boundary.
 **Mechanism:** `plugin/hooks/_harness.py`'s `iter_transcript_tool_uses(path)`
 — reads a session transcript file and yields `{id, name, input}` for every
 tool call, across both JSONL schemas (see the divergence table below for
-exactly how those schemas differ). This is what lets `track-reuse.py` and
-anything else that needs "what tools ran this session" work without its
-own per-harness transcript parser.
+exactly how those schemas differ). This is what lets a hook that needs
+"what tools ran this session" work without its own per-harness transcript
+parser. Its consumer in the shipped hooks is
+`response-patterns.py`'s `session_has_deliberate_mint()` (whether this
+session already minted a memory, so insight auto-store doesn't echo it).
+`track-reuse.py` is *not* one — it needs tool results as well as uses, so
+it keeps its own walker; see slot 4.
 
 **What it requires of a harness:** a transcript file on disk, one JSON
 object per line, each tool call identifiable by *some* combination of

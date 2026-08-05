@@ -17,7 +17,18 @@ patterns:
 
 Warning message shown when pattern matches.
 Can include {matched} placeholder for the matched text.
+
+The two deliberate-mint checks below (has_remember_call,
+session_has_deliberate_mint) read the session transcript, which has a
+different schema per harness — Claude Code's assistant/tool_use blocks vs
+Codex's response_item/function_call records. Both go through _harness so
+the checks fire on either: tool_kind classifies Claude's Bash and Codex's
+exec/exec_command alike as "shell" (a literal "Bash" test is what made
+this dead on Codex), and iter_transcript_tool_uses reads both schemas.
+Fails safe — treats the session as already-minted, suppressing the
+auto-store — if _harness itself cannot be imported.
 """
+import importlib.util
 import json
 import os
 import re
@@ -39,6 +50,20 @@ PATTERNS_DIR = Path(
 _SILL_LOG_DIR = Path(os.environ.get("SILL_LOG_DIR", "/tmp"))
 LOG_FILE = _SILL_LOG_DIR / "response-patterns.log"
 DATA_FILE = _SILL_LOG_DIR / "response-patterns-data.jsonl"  # For analysis
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
 
 
 def log(message: str):
@@ -479,51 +504,158 @@ def check_noted_without_noting(data: dict, response_text: str) -> dict | None:
     }
 
 
-def _block_is_deliberate_store(block: dict) -> bool:
-    """A tool_use block that deliberately mints a memory: MCP remember(), or a
-    Bash invocation of the sill CLI's mint path (notice / decompose_event).
-    The Bash form is how headless/detached sessions store — a remember()-only
-    check is blind to it, which is one way an echo can slip past suppression."""
-    if not isinstance(block, dict) or block.get("type") != "tool_use":
+def _shell_command_text(tool_name: str, tool_input) -> str:
+    """A shell call's command text, across the two input shapes a transcript
+    record can carry it in: a dict with "command" (Claude's Bash tool_use
+    input; Codex's exec_command function_call arguments, parsed from their
+    JSON string by _harness) or a bare string (Codex's exec custom_tool_call
+    input is freeform, and iter_transcript_tool_uses passes it through as-is
+    rather than wrapping it in a dict). _harness.shell_command handles the
+    dict shape for both harnesses; the string shape has no key to read, so it
+    IS the command.
+    """
+    if isinstance(tool_input, str):
+        return tool_input
+    if _harness is None:
+        return ""
+    return _harness.shell_command(
+        {"tool_name": tool_name, "tool_input": tool_input}) or ""
+
+
+def _is_deliberate_store(tool_name: str, tool_input) -> bool:
+    """A tool call that deliberately mints a memory: MCP remember(), or a
+    shell invocation of the sill CLI's mint path (notice / decompose_event).
+    The shell form is how headless/detached sessions store — a remember()-only
+    check is blind to it, which is one way an echo can slip past suppression.
+
+    "Shell" is decided by _harness.tool_kind, not by a literal "Bash" test:
+    Codex spells the same call exec/exec_command, so the old name test made
+    this detector — and therefore the whole echo suppression — permanently
+    False on Codex sessions, even though this hook is registered on Stop for
+    both harnesses (plugin/codex.hooks.json.template).
+    """
+    if not isinstance(tool_name, str) or not tool_name:
         return False
-    tool_name = block.get("name", "")
     if "remember" in tool_name.lower():
         return True
-    if tool_name == "Bash":
-        cmd = str((block.get("input") or {}).get("command", ""))
-        if ("sill" in cmd and re.search(r"\bnotice\b", cmd)) \
-                or "decompose_event" in cmd:
-            return True
-    return False
+    if _harness is None or _harness.tool_kind({"tool_name": tool_name}) != "shell":
+        return False
+    cmd = _shell_command_text(tool_name, tool_input)
+    return bool(("sill" in cmd and re.search(r"\bnotice\b", cmd))
+                or "decompose_event" in cmd)
+
+
+def _block_is_deliberate_store(block: dict) -> bool:
+    """_is_deliberate_store for one Claude Code tool_use content block."""
+    if not isinstance(block, dict) or block.get("type") != "tool_use":
+        return False
+    return _is_deliberate_store(block.get("name", ""), block.get("input"))
 
 
 def has_remember_call(data: dict) -> bool:
-    """Check if a deliberate store was made in the current turn."""
+    """Check if a deliberate store was made in the current turn.
+
+    Two passes over the same lines, one per transcript schema — the shape
+    track-reuse.py's get_recalled_memories established, and for the same
+    reason: neither harness's records match the other's branch, so a
+    transcript of either kind is read by exactly one pass and the other is a
+    no-op. (iter_transcript_tool_uses can't serve here: it reads a whole
+    session, and this check is scoped to the current turn.)
+    """
     transcript_path = data.get("transcript_path")
     if not transcript_path:
         return False
+    if _harness is None:
+        # Cannot inspect the session ⇒ answer the way that takes no action:
+        # True suppresses the auto-store in check_insight_with_model and
+        # withholds the noted-without-noting warning, matching the
+        # payload-integrity guard's "if the session cannot be inspected, do
+        # not auto-store".
+        return True
 
     try:
         with open(transcript_path, 'r') as f:
             lines = f.readlines()
+    except Exception:
+        return False
 
+    def entries():
         for line in reversed(lines):
             try:
-                entry = json.loads(line.strip())
-                entry_type = entry.get("type", "")
-
-                if entry_type == "user":
-                    break
-
-                if entry_type == "assistant":
-                    message = entry.get("message", {})
-                    content = message.get("content", [])
-                    if isinstance(content, list):
-                        for block in content:
-                            if _block_is_deliberate_store(block):
-                                return True
+                yield json.loads(line.strip())
             except json.JSONDecodeError:
                 continue
+
+    def message_content(entry):
+        """entry.message.content, or None if either level isn't a dict — a
+        malformed line should skip itself, not abort the scan from inside
+        the try below (which would read as "no mint")."""
+        message = entry.get("message")
+        return message.get("content") if isinstance(message, dict) else None
+
+    try:
+        # Claude Code: assistant entries carrying tool_use content blocks.
+        for entry in entries():
+            if not isinstance(entry, dict):
+                continue
+            entry_type = entry.get("type", "")
+            if entry_type == "user":
+                # Turn boundary — but only a TYPED prompt is one. Claude
+                # writes tool results as "user" entries too, so breaking on
+                # every "user" entry (what this did until now) stopped at the
+                # last tool result instead: a mint made earlier in the same
+                # turn, behind any later tool call, read as "no mint". Same
+                # test track-reuse.py's get_recalled_memories uses — string
+                # content, or a list carrying a real text block; a list of
+                # tool_result blocks is not a boundary. Anything else (no
+                # content, an unexpected shape) keeps scanning, which errs
+                # toward finding a mint, i.e. toward NOT auto-storing.
+                # Codex has no such ambiguity (its results are
+                # function_call_output records), so the pass below breaks on
+                # the genuine user message.
+                content = message_content(entry)
+                if isinstance(content, str):
+                    break
+                if isinstance(content, list) and any(
+                        isinstance(b, dict) and b.get("type") == "text"
+                        for b in content):
+                    break
+                continue
+            if entry_type == "assistant":
+                content = message_content(entry)
+                if isinstance(content, list):
+                    for block in content:
+                        if _block_is_deliberate_store(block):
+                            return True
+
+        # Codex: response_item records wrapping a function_call (exec_command,
+        # MCP calls — name split into namespace + name) or a custom_tool_call
+        # (exec, freeform string input).
+        for entry in entries():
+            if not isinstance(entry, dict) or entry.get("type") != "response_item":
+                continue
+            payload = entry.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            ptype = payload.get("type")
+            if ptype == "message" and payload.get("role") == "user":
+                break
+            if ptype == "function_call":
+                name = _harness.join_mcp_name(payload) or ""
+                # Mirrors _harness's own parse-or-keep-raw contract for
+                # `arguments`: malformed JSON stays a string rather than
+                # vanishing, and _shell_command_text still reads it.
+                arguments = payload.get("arguments")
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        pass
+                if _is_deliberate_store(name, arguments):
+                    return True
+            elif ptype == "custom_tool_call":
+                if _is_deliberate_store(payload.get("name") or "", payload.get("input")):
+                    return True
     except Exception:
         pass
 
@@ -539,24 +671,20 @@ def session_has_deliberate_mint(data: dict) -> bool:
     and can diverge from its force/speaker tags or invert its content.
     Deliberate mints carry --source and force tags; an echo carries neither
     faithfully.
+
+    Session-wide and turn-agnostic, so this one delegates the whole walk to
+    _harness.iter_transcript_tool_uses, which already reads both harnesses'
+    schemas and normalizes each call to {id, name, input}.
     """
     transcript_path = data.get("transcript_path")
     if not transcript_path:
         return False
+    if _harness is None:
+        return True  # cannot inspect — see has_remember_call's note
     try:
-        with open(transcript_path, 'r') as f:
-            for line in f:
-                try:
-                    entry = json.loads(line.strip())
-                except json.JSONDecodeError:
-                    continue
-                if entry.get("type") != "assistant":
-                    continue
-                content = entry.get("message", {}).get("content", [])
-                if isinstance(content, list):
-                    for block in content:
-                        if _block_is_deliberate_store(block):
-                            return True
+        for record in _harness.iter_transcript_tool_uses(transcript_path):
+            if _is_deliberate_store(record.get("name") or "", record.get("input")):
+                return True
     except Exception:
         pass
     return False

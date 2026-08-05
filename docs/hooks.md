@@ -77,8 +77,9 @@ instead of string-matching a Claude-only tool name:
 
 ```bash
 grep -l "_harness" plugin/hooks/*.py
-# -> attribution-check.py, shell-idiom-guard.py, state-language-check.py,
-#    stored-slot-guard.py, tool-type-witness.py, track-reuse.py
+# -> attribution-check.py, response-patterns.py, shell-idiom-guard.py,
+#    state-language-check.py, stored-slot-guard.py, tool-type-witness.py,
+#    track-reuse.py
 ```
 
 | Hook | Event | Default-wired | Harnesses |
@@ -90,7 +91,7 @@ grep -l "_harness" plugin/hooks/*.py
 | `shell-idiom-guard` | PreToolUse | yes | Claude Code + Codex. Harness-normalized — this is the guard the previous release's Codex matcher gap disabled there entirely (it matched `tool_name == "Bash"` only). |
 | `stored-slot-guard` | PreToolUse | yes | Claude Code + Codex. Harness-normalized; a multi-file `apply_patch` is judged file-by-file via `written_files`, not just its first file. |
 | `tool-type-witness` | PreToolUse | yes | Claude Code + Codex. Harness-normalized; same multi-file, file-by-file fix as `stored-slot-guard`. |
-| `response-patterns` | Stop | yes | Claude Code + Codex. Reads Codex's `last_assistant_message` directly when present; falls back to walking `transcript_path` for Claude. Not routed through `_harness.py` — this branching predates it and covers the same ground a different way. |
+| `response-patterns` | Stop | yes | Claude Code + Codex. Response *text* needs no normalization — it reads Codex's `last_assistant_message` directly when present and falls back to walking `transcript_path` for Claude. Its two deliberate-mint checks do: they walk the transcript, whose schema differs by harness, and are harness-normalized (`tool_kind` + `iter_transcript_tool_uses`). Before that they matched only Claude's `assistant`/`tool_use` shape and the tool name `Bash`, so on Codex they returned `False` unconditionally and the echo suppression silently never engaged. |
 | `clear-handoff` | SessionStart | yes | Registered on both (the shared template wires it into both configs) but **functionally Claude Code only** — it parses Claude's transcript JSONL shape; a Codex `SessionStart` payload matches nothing here and the hook silently no-ops, which is the documented, intended degrade (see its own section below). |
 | `track-verification` | PostToolUse | no | Claude Code + Codex, if wired. Marks verification for *any* non-empty `tool_name` — there's no allowlist to miss a Codex-only name. |
 | `check-corrections` | UserPromptSubmit | no | Claude Code + Codex, if wired. Reads `prompt` only, the same harness-agnostic field `spontaneous-recall` relies on. |
@@ -415,6 +416,17 @@ CLI's `notice`/`decompose_event`, the insight detector is skipped
 entirely. An auto-store on top of a deliberate mint would be an
 unhedged echo of something already recorded, and could diverge from
 its force/speaker tags.
+
+Both checks read the session transcript, whose schema differs by
+harness, so both go through `_harness.py`: `tool_kind` classifies
+Claude's `Bash` and Codex's `exec`/`exec_command` alike as shell calls,
+and the whole-session check walks either schema via
+`iter_transcript_tool_uses`. Until they did, they matched only Claude's
+`assistant`/`tool_use` shape and the literal tool name `Bash` — so on
+Codex both answered "no mint" unconditionally and this suppression
+never engaged, even though the hook is registered on `Stop` for both
+harnesses. Pinned by
+`backend/tests/test_response_patterns.py::test_deliberate_mint_is_seen_on_both_harnesses`.
 
 **Env vars:**
 
