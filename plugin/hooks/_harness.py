@@ -24,6 +24,12 @@ Two input shapes, not one:
   looked like it worked because a downstream filter used a substring
   test).
 
+written_path/written_text answer for ONE file only — the first header in
+an apply_patch body. A caller that gates an in-scope check on
+written_path() before ever reading written_text() therefore judges a
+whole multi-file patch by its first file alone; written_files() is the
+per-file-safe alternative — see its docstring.
+
 Every function below that takes a payload/record is total: garbage in
 (None, a list, a bare string, a dict with None values, an empty dict)
 returns the documented "nothing here" value rather than raising. Hooks
@@ -182,6 +188,12 @@ def written_path(payload: object) -> str | None:
     the patch body's own header line, so it is parsed out of the body
     rather than looked up; see _parse_patch_path for the unparseable
     case.
+
+    This is the single-file view of written_files: for a multi-file
+    apply_patch body it reports only the FIRST file's path. A caller that
+    gates scope on this value alone before ever calling written_text is
+    exactly the bug written_files exists to fix — see that function's
+    docstring — so prefer written_files for any scope-then-read check.
     """
     try:
         kind = tool_kind(payload)
@@ -248,6 +260,12 @@ def written_text(payload: object) -> str | None:
     being introduced, not what it replaces), MultiEdit's new_string
     values newline-joined (see _multi_edit_text), or apply_patch's added
     ("+") lines scoped to the first file header (see _patch_added_text).
+
+    This is the single-file view of written_files: for a multi-file
+    apply_patch body it reports only the FIRST file's added text, paired
+    with written_path's first-file path above. See written_files's
+    docstring for the caller-visible bug that pairing causes when a
+    caller checks written_path's scope before ever reading this.
     """
     try:
         kind = tool_kind(payload)
@@ -265,6 +283,87 @@ def written_text(payload: object) -> str | None:
         return None
     except Exception:
         return None
+
+
+def _parse_patch_files(patch: str) -> list[tuple[str, str]]:
+    """Split an apply_patch body into one (path, added_text) pair PER FILE
+    header ("*** Update File: <path>" / "*** Add File: <path>"), each
+    added_text scoped to only that file's own "+" lines — the per-file
+    generalization of _parse_patch_path/_patch_added_text, which both stop
+    at the first header.
+
+    A header line whose path strips to empty contributes no pair for that
+    section (same "don't guess a path" contract as _parse_patch_path), but
+    does not stop a later, well-formed header from contributing its own
+    pair. A file section with no "+" lines still contributes ("path", "")
+    rather than being dropped — the file WAS named by this patch; there is
+    simply nothing added to scan for it. Content before the first header
+    (no path to attribute it to yet) is discarded, matching
+    _parse_patch_path's "no header, no path" contract.
+    """
+    files: list[tuple[str, str]] = []
+    path: str | None = None
+    lines: list[str] = []
+
+    def flush() -> None:
+        if path is not None:
+            files.append((path, "\n".join(lines)))
+
+    for line in patch.splitlines():
+        header = next((h for h in _PATCH_HEADERS if line.startswith(h)), None)
+        if header is not None:
+            flush()
+            path = line[len(header):].strip() or None
+            lines = []
+            continue
+        if path is not None and line.startswith("+"):
+            lines.append(line[1:])
+    flush()
+    return files
+
+
+def written_files(payload: object) -> list[tuple[str, str]]:
+    """Every (path, added_text) pair a Write/Edit/MultiEdit (Claude) or
+    apply_patch (Codex) call touches — the plural, multi-file-safe form of
+    written_path/written_text. A single-file call yields a one-element
+    list; a multi-file apply_patch body yields one pair per file header,
+    each text scoped to that file's own "+" lines only (see
+    _parse_patch_files). [] when nothing is parseable at all (wrong tool
+    kind, missing tool_input, an apply_patch body with no header, a
+    Write/Edit/MultiEdit with no file_path).
+
+    Exists to close a bypass: a caller that checks "is THE path in scope?"
+    using written_path() alone, then reads written_text() only if so,
+    answers for the WHOLE call using just the first file's path. A patch
+    whose first file is irrelevant and whose second file is in scope reads
+    as entirely out of scope — the in-scope second file's text is never
+    even looked at. A caller that needs correct per-file scope must
+    iterate this function instead and judge each pair on its own path; see
+    plugin/hooks/state-language-check.py, stored-slot-guard.py, and
+    tool-type-witness.py, which all switched to this after the bypass was
+    found (task report has the specifics).
+    """
+    try:
+        kind = tool_kind(payload)
+        if kind not in ("write", "edit"):
+            return []
+        ti = _tool_input(payload)
+        if ti is None:
+            return []
+        if _tool_name(payload) == "apply_patch":
+            patch = _as_str(ti.get("input"))
+            return _parse_patch_files(patch) if patch is not None else []
+        path = _as_str(ti.get("file_path"))
+        if path is None:
+            return []
+        if kind == "write":
+            text = _as_str(ti.get("content")) or ""
+        else:
+            multi = _multi_edit_text(ti)
+            text = multi if multi is not None else (_as_str(ti.get("new_string")) or "")
+        return [(path, text)]
+    except Exception:
+        return []
 
 
 def assistant_text(payload: object) -> str | None:

@@ -25,15 +25,20 @@ attribution-error pattern, hence the same hook shape.
 Non-blocking. Flags for verify-or-rephrase before storage. Logs to
 /tmp/state-language-check.log.
 
-Fires on both harnesses via _harness.tool_kind/shell_command/written_path/
-written_text: Claude's Bash normalizes with Codex's exec/exec_command to
-"shell" kind, and Claude's Write/Edit normalize with Codex's apply_patch to
-"write"/"edit" kind (apply_patch always "write", even a "*** Update File:"
-body — see _harness.py). The MCP branches (remember/remember_batch)
-already worked on both harnesses before this — hook payloads flatten an
-MCP tool name to "mcp__server__tool" on both Claude Code and Codex, and
-is_tool_name() matches by suffix. Fails open — exits 0, no output — if
-_harness itself cannot be imported.
+Fires on both harnesses via _harness.tool_kind/shell_command/written_files:
+Claude's Bash normalizes with Codex's exec/exec_command to "shell" kind,
+and Claude's Write/Edit normalize with Codex's apply_patch to "write"/
+"edit" kind (apply_patch always "write", even a "*** Update File:" body —
+see _harness.py). Scope and text for the write/edit branch are read per
+FILE via written_files, not written_path/written_text (which only ever
+answer for a patch's first file) — a multi-file apply_patch is judged
+file by file, so an out-of-scope first file can no longer hide state
+language in an in-scope second file (2026-08-05 bypass, closed same-day).
+The MCP branches (remember/remember_batch) already worked on both
+harnesses before this — hook payloads flatten an MCP tool name to
+"mcp__server__tool" on both Claude Code and Codex, and is_tool_name()
+matches by suffix. Fails open — exits 0, no output — if _harness itself
+cannot be imported.
 """
 import importlib.util
 import json
@@ -172,14 +177,19 @@ def extract_content(data: dict) -> str | None:
     kind = _harness.tool_kind(data)
 
     if kind in ("write", "edit"):
-        # written_path/written_text already dispatch Write's file_path/content,
-        # Edit's (and MultiEdit's) new_string(s), and apply_patch's header-line
-        # path plus its "+" additions scoped to that same file (see
-        # _harness.py) — one branch for all three instead of a per-tool_name
-        # copy of the same scope-then-extract shape.
-        if not is_relevant_path(_harness.written_path(data)):
-            return None
-        return _harness.written_text(data)
+        # written_files dispatches Write's file_path/content, Edit's (and
+        # MultiEdit's) new_string(s), and apply_patch's header-line paths
+        # plus each file's own "+" additions (see _harness.py) — one branch
+        # for all three instead of a per-tool_name copy of the same
+        # scope-then-extract shape. Iterated (not written_path/written_text,
+        # which only ever answer for a patch's FIRST file) so a multi-file
+        # apply_patch is judged file by file: an out-of-scope first file can
+        # no longer hide state language in an in-scope second file
+        # (2026-08-05 bypass, closed same-day). Multiple in-scope files'
+        # text is joined the same way remember_batch's memories are below.
+        parts = [text for path, text in _harness.written_files(data)
+                 if is_relevant_path(path) and text]
+        return "\n\n---\n\n".join(parts) if parts else None
 
     if kind == "shell":
         cmd = _harness.shell_command(data) or ""

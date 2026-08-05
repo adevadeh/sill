@@ -36,10 +36,14 @@ Fails OPEN when the store is unreachable — a down store must not block a
 journal write. Each id is checked independently, so one unreachable lookup
 skips only that id rather than abandoning the rest of the line's ids.
 
-Fires on both harnesses via _harness.tool_kind/written_path/written_text:
-Claude's Write/Edit and Codex's apply_patch all normalize to "write" or
-"edit" kind (see _harness.py). Also fails open — exits 0, no output — if
-_harness itself cannot be imported.
+Fires on both harnesses via _harness.tool_kind/written_files: Claude's
+Write/Edit and Codex's apply_patch all normalize to "write" or "edit" kind
+(see _harness.py). Scope and text are read per FILE via written_files, not
+written_path/written_text (which only ever answer for a patch's first
+file) — a multi-file apply_patch is judged file by file, so an
+out-of-scope first file can no longer hide a forged receipt in an in-scope
+second file (2026-08-05 bypass, closed same-day). Also fails open — exits
+0, no output — if _harness itself cannot be imported.
 """
 import importlib.util
 import json
@@ -115,21 +119,25 @@ def main() -> None:
         sys.exit(0)
     if _harness.tool_kind(data) not in ("write", "edit"):
         sys.exit(0)
-    path = _harness.written_path(data) or ""
-    if not _in_scope(path):
-        sys.exit(0)
-    text = _harness.written_text(data) or ""
-    if "stored" not in text.lower():
-        sys.exit(0)
 
+    # Iterate every file this call touches, not just the first: a multi-file
+    # apply_patch's first file deciding scope for the WHOLE call would let an
+    # out-of-scope first file hide a forged receipt in an in-scope second
+    # file — see _harness.written_files's docstring. Each file is judged
+    # (and, if in scope, scanned) on its own path/text pair.
     ids = []
-    for line in text.splitlines():
-        head = re.split(r"stored", line, maxsplit=1, flags=re.IGNORECASE)[0]
-        if "`" in head or line.lstrip().startswith(">"):
-            continue  # quoted/backticked context: specimen material, not a receipt
-        m = RECEIPT_LINE.match(line)
-        if m:
-            ids.append(m.group(1).lower())
+    for path, text in _harness.written_files(data):
+        if not _in_scope(path):
+            continue
+        if "stored" not in text.lower():
+            continue
+        for line in text.splitlines():
+            head = re.split(r"stored", line, maxsplit=1, flags=re.IGNORECASE)[0]
+            if "`" in head or line.lstrip().startswith(">"):
+                continue  # quoted/backticked context: specimen material, not a receipt
+            m = RECEIPT_LINE.match(line)
+            if m:
+                ids.append(m.group(1).lower())
     if not ids:
         sys.exit(0)
 

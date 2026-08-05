@@ -23,11 +23,15 @@ error. Registered on Write only — an Edit-delivered version of this text
 is not a contradiction, so checking Edit would only cost a wasted
 interpreter start on every edit.
 
-Fires on both harnesses via _harness.tool_kind/written_path/written_text:
-Claude's Write and Codex's apply_patch both normalize to "write" kind
-(apply_patch always — even a "*** Update File:" body — never "edit"; see
-_harness.py). Fails open — exits 0, no output — if _harness itself
-cannot be imported.
+Fires on both harnesses via _harness.tool_kind/written_files: Claude's
+Write and Codex's apply_patch both normalize to "write" kind (apply_patch
+always — even a "*** Update File:" body — never "edit"; see _harness.py).
+Scope and text are read per FILE via written_files, not written_path/
+written_text (which only ever answer for a patch's first file) — a
+multi-file apply_patch is judged file by file, so an out-of-scope first
+file can no longer hide a carrying-act claim in an in-scope second file
+(2026-08-05 bypass, closed same-day). Fails open — exits 0, no output —
+if _harness itself cannot be imported.
 """
 import importlib.util
 import json
@@ -90,17 +94,21 @@ def main() -> None:
         sys.exit(0)
     if _harness.tool_kind(data) != "write":
         sys.exit(0)  # an Edit-delivered version of this text is not a contradiction
-    path = _harness.written_path(data) or ""
-    if not _in_scope(path):
-        sys.exit(0)
-    text = _harness.written_text(data) or ""
 
+    # Iterate every file this call touches, not just the first: a multi-file
+    # apply_patch's first file deciding scope for the WHOLE call would let an
+    # out-of-scope first file hide a carrying-act claim in an in-scope
+    # second file — see _harness.written_files's docstring. Each file is
+    # judged (and, if in scope, scanned) on its own path/text pair.
     hits = []
-    for line in text.splitlines():
-        for pat in PATTERNS:
-            m = pat.search(line)
-            if m and not quoted_at(line, m.start()):
-                hits.append(m.group(0))
+    for path, text in _harness.written_files(data):
+        if not _in_scope(path):
+            continue
+        for line in text.splitlines():
+            for pat in PATTERNS:
+                m = pat.search(line)
+                if m and not quoted_at(line, m.start()):
+                    hits.append(m.group(0))
     if not hits:
         sys.exit(0)
 

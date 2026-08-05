@@ -80,6 +80,62 @@ def test_multi_file_patch_text_is_scoped_to_the_path_it_reports():
     assert h.written_text(CODEX_MULTI_FILE_PATCH) == "x"
 
 
+# --- written_files: the plural, multi-file-safe view -----------------------
+#
+# written_path/written_text only ever answer for the FIRST file header in an
+# apply_patch body. A caller that gates scope on written_path() alone before
+# reading written_text() answers "in scope?" for the whole call using only
+# that first file's path — so a patch whose first file is irrelevant and
+# whose second file is in scope is never inspected at all: written_path
+# reports the irrelevant path, the scope check fails, and the caller never
+# even looks at the second file's text. This is the bypass
+# test_guards_on_both_harnesses.py's multi-file tests close at the guard
+# level; these are the harness-level tests for the API those guards now use.
+
+def test_written_files_single_file_matches_written_path_and_text():
+    """For any single-file call, written_files is exactly the one-element
+    [(written_path, written_text)] pair — the plural form must not silently
+    diverge from the singular one it replaces for scope-gating."""
+    for payload in (CLAUDE_WRITE, CODEX_PATCH, CLAUDE_EDIT, CLAUDE_MULTI_EDIT):
+        assert h.written_files(payload) == [(h.written_path(payload), h.written_text(payload))]
+
+
+def test_written_files_scopes_each_files_text_to_itself_on_a_multi_file_patch():
+    """The core property: every file gets its OWN pair, text scoped to only
+    that file's '+' lines — b.md's pair must not include a.md's 'alpha' and
+    vice versa. Bumped to two added lines on the second file to also prove
+    a file's own multi-line text is joined correctly, not just truncated to
+    one line."""
+    payload = {"tool_name": "apply_patch",
+               "tool_input": {"input": "*** Update File: a.md\n+alpha\n"
+                                        "*** Update File: b.md\n+bravo\n+charlie\n"}}
+    assert h.written_files(payload) == [("a.md", "alpha"), ("b.md", "bravo\ncharlie")]
+
+
+def test_written_files_skips_a_header_with_no_path_but_keeps_later_files():
+    """Mirrors _parse_patch_path's 'blank-tail header' case (Task 1), but
+    per-file: a header whose path strips to empty contributes no pair for
+    that section — same 'don't guess a path' contract — without that
+    dropping the file that follows it."""
+    payload = {"tool_name": "apply_patch",
+               "tool_input": {"input": "*** Update File:    \n+dropped\n"
+                                        "*** Update File: b.md\n+kept\n"}}
+    assert h.written_files(payload) == [("b.md", "kept")]
+
+
+def test_written_files_empty_when_nothing_parseable():
+    assert h.written_files({"tool_name": "apply_patch",
+                             "tool_input": {"input": "no header in this body\n"}}) == []
+    assert h.written_files({"tool_name": "Write", "tool_input": {"content": "x"}}) == []  # no file_path
+    assert h.written_files(CLAUDE_BASH) == []  # wrong kind entirely
+    assert h.written_files({}) == []
+
+
+def test_written_files_never_raises_on_garbage():
+    for junk in [None, [], "string", {"tool_input": None}, {"tool_name": None}]:
+        assert h.written_files(junk) == []
+
+
 def test_unknown_tool_is_other_not_a_crash():
     assert h.tool_kind({"tool_name": "image_gen.imagegen", "tool_input": {}}) == "other"
     assert h.tool_kind({}) == "other"
