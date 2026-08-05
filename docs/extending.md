@@ -87,8 +87,35 @@ order). The composition rules:
   `<project>/.codex/hooks.json`. Sill's installer merges into
   these files idempotently; adding your own entries alongside is
   safe.
-- **Globally**, in `~/.claude/settings.json`. Sill doesn't touch
-  this file.
+- **Globally**, in `~/.claude/settings.json` (and `~/.codex/hooks.json`
+  for Codex). If you ran `./install.sh --scope project` (the default),
+  Sill never touches these files — add your own hooks there freely. If
+  you ran `./install.sh --scope home`, Sill's own hooks live there too
+  (merged idempotently, same as the per-project case); your entries and
+  Sill's coexist the same way they would in a project's
+  `settings.local.json`. See the "Install scope" section below.
+
+### Install scope: `--scope home` vs `--scope project`
+
+`./install.sh`'s `--hooks-for <path>` (project scope, the default) and
+`--scope home` are two different answers to "where do Sill's hooks run,"
+not two ways of writing the same thing — the tradeoff is real in both
+directions:
+
+- **`--scope project`** (default): hooks go into one project's
+  `.claude/settings.local.json` and `.codex/hooks.json`. Narrower blast
+  radius, no cross-project mixing — but every new project needs its own
+  `--hooks-for` run, and only wired projects get recall/guards.
+- **`--scope home`**: hooks go into `~/.claude/settings.json` and
+  `~/.codex/hooks.json`, plus an ambient instructions file
+  (`~/.claude/CLAUDE.md`, from `plugin/claude.home.md.template`) so every
+  session in every directory carries the Sill background. In exchange:
+  every prompt in every project pays the recall hook's latency, and any
+  project's work can reach the one store.
+
+`--scope home` and `--hooks-for <path>` are additive, not exclusive — you
+can register home-scope hooks and also give one project its own
+project-scoped entries in the same run.
 
 **Avoiding matcher conflicts.** Sill's `PreToolUse` matchers
 target memory-storage tools and (for state-language-check)

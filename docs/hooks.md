@@ -741,23 +741,33 @@ full pattern.
 
 ## Adding hooks to a project
 
-When you ran `./install.sh --hooks-for /path/to/project`, the
-installer wrote two files:
+When you ran `./install.sh --scope project --hooks-for /path/to/project`
+(`--scope project` is the default), the installer wrote two files:
 
 - `/path/to/project/.codex/hooks.json` — full Codex hook config,
   rendered from `plugin/codex.hooks.json.template`, but **only if
   that file didn't already exist.** If it existed, install.sh left it
   untouched and printed a note to that effect. Re-running
-  `--hooks-for` later (e.g. after upgrading to a Sill version with new
-  hooks) will **not** pick up anything new on the Codex side unless
-  you delete the file first — see the Upgrading section in
-  `README.md` for the exact remedy and a command that checks whether
-  yours is stale.
+  `install.sh --hooks-for` later (e.g. after upgrading to a Sill
+  version with new hooks) will **not** pick up anything new on the
+  Codex side — `install.sh` deliberately only does first wiring. Use
+  `./upgrade.sh --hooks-for /path/to/project --hooks-only` instead: it
+  diffs the existing file against the current template and, if they
+  differ, prints the diff and asks for `--force-hooks` before
+  overwriting anything. See the Upgrading section in `README.md`.
 - `/path/to/project/.claude/settings.local.json` — merged into any
   existing `hooks` block, idempotently: existing entries are
   preserved and Sill's own are deduplicated by comparing each entry's
   JSON. Unlike the Codex side, this one *does* pick up new hooks on a
-  later `--hooks-for` re-run.
+  later `install.sh --hooks-for` re-run (and `upgrade.sh --hooks-for`
+  does the same merge).
+
+`--scope home` (`./install.sh --scope home`) is the other option:
+hooks go into `~/.claude/settings.json` and `~/.codex/hooks.json`
+instead of a per-project file, plus an ambient instructions file at
+`~/.claude/CLAUDE.md`, so every session in every directory carries the
+Sill background instead of just wired projects. See `README.md`'s
+"Install scope" section for the tradeoff.
 
 Some hooks (`track-verification`, `check-agreement`,
 `check-corrections`, `precompact-snapshot`, `goodnight-checkpoint`)

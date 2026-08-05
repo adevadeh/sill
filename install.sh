@@ -10,14 +10,36 @@
 #   6.  Symlink the plugin into ~/.claude/plugins/local/sill-plugin.
 #   7.  Idempotently merge the MCP server entry into ~/.claude/.mcp.json
 #       (and ~/.codex/config.toml if Codex is installed).
-#   8.  --hooks-for <project>: write idempotent hook configs into a target project.
+#   8.  Hook wiring, per --scope (default project):
+#         project — --hooks-for <path> writes idempotent hook configs into
+#                   that project's .claude/settings.local.json and
+#                   .codex/hooks.json. Nothing happens without --hooks-for.
+#         home    — registers hooks user-scope (~/.claude/settings.json,
+#                   ~/.codex/hooks.json) and installs an ambient
+#                   instructions file (~/.claude/CLAUDE.md) so every
+#                   session in every directory carries the Sill
+#                   background. --hooks-for still works alongside it,
+#                   additively, for a project that also wants its own
+#                   project-scoped entries.
 #   9.  Print a "run ./verify.sh" hint.
 #  10.  Final next-steps banner.
 #
 # Flags:
+#   --scope home|project   Where hooks are wired (default: project). This is
+#                          a real tradeoff, not a style choice — see step 8
+#                          above and docs/extending.md:
+#                            project — narrower blast radius, no
+#                              cross-project mixing, but only the project(s)
+#                              you --hooks-for get recall/guards.
+#                            home    — every prompt in every project pays
+#                              the recall hook's latency, and any project's
+#                              work can reach the one store; in exchange you
+#                              never re-wire hooks per project again.
 #   --no-seed              Skip step 5.
 #   --hooks-for <project>  Write per-project hook configs into <project>/.claude
-#                          and <project>/.codex.
+#                          and <project>/.codex. Applies with --scope project
+#                          (the default); additive, not exclusive, with
+#                          --scope home.
 #   --dry-run              Print each step without doing it.
 #   --help                 Show this help.
 
@@ -27,9 +49,10 @@ set -euo pipefail
 NO_SEED=0
 DRY_RUN=0
 HOOKS_FOR=""
+SCOPE="project"
 
 usage() {
-  sed -n '2,25p' "$0"
+  sed -n '2,44p' "$0"
 }
 
 while (( $# )); do
@@ -47,6 +70,18 @@ while (( $# )); do
       HOOKS_FOR="$2"
       shift 2
       ;;
+    --scope)
+      [[ $# -ge 2 ]] || { echo "install.sh: --scope requires a value (home or project)" >&2; exit 2; }
+      SCOPE="$2"
+      case "$SCOPE" in
+        home|project) ;;
+        *)
+          echo "install.sh: invalid --scope '$SCOPE' — valid values: home, project" >&2
+          exit 2
+          ;;
+      esac
+      shift 2
+      ;;
     --help|-h)
       usage
       exit 0
@@ -60,7 +95,12 @@ while (( $# )); do
 done
 
 # --- helpers ------------------------------------------------------------------
-SILL_DIR="$(cd "$(dirname "$0")" && pwd)"
+# BASH_SOURCE, not $0: this resolves correctly whether the script is run
+# directly (the normal case) or sourced (backend/tests/test_install_scope.py
+# sources it to unit-test individual step functions without running the
+# full 10-step pipeline — see that file's docstring and the main guard at
+# the bottom of this file).
+SILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$SILL_DIR/backend/docker-compose.yml"
 
 say() { printf '\n=== %s ===\n' "$*"; }
@@ -301,30 +341,24 @@ sill_python() {
   printf 'python3'
 }
 
-# --- step 8: optional --hooks-for project wiring -----------------------------
-step_hooks_for_project() {
-  say "Step 8/10: per-project hook config"
-  if [[ -z "$HOOKS_FOR" ]]; then
-    note "--hooks-for not provided; skipping"
+# Render Codex hooks.json at $2 from template $1, skipping (with a note) if
+# the destination already exists — re-rendering an *existing* install is
+# ./upgrade.sh's job (it shows a diff and supports --force-hooks; see
+# upgrade.sh's own header), not this first-wiring step's. Shared by both
+# --scope project (per-project .codex/hooks.json) and --scope home
+# (~/.codex/hooks.json).
+_render_codex_hooks() {
+  local template="$1" dst="$2" plugin_dir="$3" sill_py="$4"
+  if (( DRY_RUN )); then
+    note "DRY: would render $template -> $dst with SILL_PLUGIN_DIR=$plugin_dir SILL_PYTHON=$sill_py"
     return 0
   fi
-  local target
-  target="$(cd "$HOOKS_FOR" && pwd)"
-  local plugin_dir="$SILL_DIR/plugin"
-  local template="$SILL_DIR/plugin/codex.hooks.json.template"
-  local sill_py
-  sill_py="$(sill_python)"
-
-  # Codex per-project hooks.
-  local codex_dst="$target/.codex/hooks.json"
-  if (( DRY_RUN )); then
-    note "DRY: would render $template -> $codex_dst with SILL_PLUGIN_DIR=$plugin_dir SILL_PYTHON=$sill_py"
-  else
-    mkdir -p "$(dirname "$codex_dst")"
-    if [[ -f "$codex_dst" ]]; then
-      note "  $codex_dst already exists; leaving as-is (delete to re-render)"
-    else
-      python3 - "$template" "$codex_dst" "$plugin_dir" "$sill_py" <<'PY'
+  mkdir -p "$(dirname "$dst")"
+  if [[ -f "$dst" ]]; then
+    note "  $dst already exists; leaving as-is (see ./upgrade.sh --hooks-for to refresh)"
+    return 0
+  fi
+  python3 - "$template" "$dst" "$plugin_dir" "$sill_py" <<'PY'
 import pathlib, sys
 src, dst, plugin, py = sys.argv[1:5]
 text = (pathlib.Path(src).read_text()
@@ -333,16 +367,23 @@ text = (pathlib.Path(src).read_text()
 pathlib.Path(dst).write_text(text)
 print(f"  wrote {dst}")
 PY
-    fi
-  fi
+}
 
-  # Claude Code per-project hooks (same hook commands, different schema location).
-  local claude_dst="$target/.claude/settings.local.json"
+# Idempotently merge the template's hooks block into a Claude Code hooks
+# JSON file. Both destinations this installer writes share the same
+# top-level {"hooks": {...}} shape: <project>/.claude/settings.local.json
+# (project scope) and ~/.claude/settings.json (home scope — Claude Code's
+# own "globally" location; see docs/extending.md's "Adding your own hooks"
+# section, and this repo's own live ~/.claude/settings.json, which already
+# carries unrelated hooks under the same key).
+_merge_claude_hooks() {
+  local template="$1" dst="$2" plugin_dir="$3" sill_py="$4"
   if (( DRY_RUN )); then
-    note "DRY: would idempotently merge hooks block into $claude_dst"
-  else
-    mkdir -p "$(dirname "$claude_dst")"
-    python3 - "$template" "$claude_dst" "$plugin_dir" "$sill_py" <<'PY'
+    note "DRY: would idempotently merge hooks block into $dst"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  python3 - "$template" "$dst" "$plugin_dir" "$sill_py" <<'PY'
 import json, pathlib, sys
 template_path, dst_path, plugin, py = sys.argv[1:5]
 template = json.loads(pathlib.Path(template_path).read_text()
@@ -372,7 +413,69 @@ if changed:
 else:
     print(f"  {dst} already has sill hooks; nothing to do")
 PY
+}
+
+# Idempotently append plugin/claude.home.md.template's ambient-instructions
+# block to ~/.claude/CLAUDE.md. Never touches anything already in that
+# file — it's the operator's own global instructions file, which may
+# already carry substantial unrelated content — keyed on a marker comment
+# so a second run is a no-op instead of a duplicate append.
+_install_home_ambient_file() {
+  local plugin_dir="$1"
+  local template="$plugin_dir/claude.home.md.template"
+  local dst="$HOME/.claude/CLAUDE.md"
+  if (( DRY_RUN )); then
+    note "DRY: would idempotently append $template -> $dst"
+    return 0
   fi
+  mkdir -p "$(dirname "$dst")"
+  python3 - "$template" "$dst" <<'PY'
+import pathlib, sys
+template_path, dst_path = sys.argv[1:3]
+block = pathlib.Path(template_path).read_text().rstrip("\n") + "\n"
+marker = "<!-- sill:home-scope-ambient -->"
+dst = pathlib.Path(dst_path)
+existing = dst.read_text() if dst.exists() else ""
+if marker in existing:
+    print(f"  {dst} already has the Sill ambient block; nothing to do")
+else:
+    prefix = existing
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    if prefix and not prefix.endswith("\n\n"):
+        prefix += "\n"
+    dst.write_text(prefix + block)
+    print(f"  appended Sill ambient block -> {dst}")
+PY
+}
+
+# --- step 8: hook wiring, per --scope ------------------------------------------
+step_hook_wiring() {
+  say "Step 8/10: hook wiring (scope: $SCOPE)"
+  local plugin_dir="$SILL_DIR/plugin"
+  local template="$SILL_DIR/plugin/codex.hooks.json.template"
+  local sill_py
+  sill_py="$(sill_python)"
+
+  if [[ "$SCOPE" == "home" ]]; then
+    note "home scope: every prompt in every project will pay the recall hook's latency, and any project's work can reach this one store."
+    _render_codex_hooks "$template" "$HOME/.codex/hooks.json" "$plugin_dir" "$sill_py"
+    _merge_claude_hooks "$template" "$HOME/.claude/settings.json" "$plugin_dir" "$sill_py"
+    _install_home_ambient_file "$plugin_dir"
+  fi
+
+  if [[ -z "$HOOKS_FOR" ]]; then
+    if [[ "$SCOPE" == "project" ]]; then
+      note "--hooks-for not provided; skipping"
+    fi
+    return 0
+  fi
+
+  local target
+  target="$(cd "$HOOKS_FOR" && pwd)"
+  note "project scope target: $target (narrower blast radius, no cross-project mixing)"
+  _render_codex_hooks "$template" "$target/.codex/hooks.json" "$plugin_dir" "$sill_py"
+  _merge_claude_hooks "$template" "$target/.claude/settings.local.json" "$plugin_dir" "$sill_py"
 }
 
 # --- step 9: verify hint ------------------------------------------------------
@@ -399,13 +502,20 @@ EOF
 }
 
 # --- main ---------------------------------------------------------------------
-step_preflight
-step_install_backend
-step_docker_up
-step_wait_healthy
-step_import_seed
-step_plugin_symlink
-step_mcp_wiring
-step_hooks_for_project
-step_verify_hint
-step_banner
+# Guarded so backend/tests/test_install_scope.py can `source` this file to
+# unit-test individual step/helper functions (e.g. _install_home_ambient_file)
+# against a tmp HOME without running the full 10-step pipeline. True whenever
+# this file is executed directly (./install.sh or bash install.sh, the only
+# ways a real operator runs it) and false when sourced.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
+  step_preflight
+  step_install_backend
+  step_docker_up
+  step_wait_healthy
+  step_import_seed
+  step_plugin_symlink
+  step_mcp_wiring
+  step_hook_wiring
+  step_verify_hint
+  step_banner
+fi

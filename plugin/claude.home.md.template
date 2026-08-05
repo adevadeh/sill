@@ -1,0 +1,39 @@
+<!-- sill:home-scope-ambient -->
+## Sill (ambient memory — home scope)
+
+This machine has Sill's hooks registered at **home scope**: user-wide
+(`~/.claude/settings.json`, `~/.codex/hooks.json`), not per-project. Every
+session in every directory carries this background as a result.
+
+**What it is.** A local Postgres + pgvector + Apache AGE store, reachable
+over MCP as the `sill` server (`recall`, `remember`, `hydrate`, and related
+tools), backing a small set of hooks.
+
+**What happens automatically.** Every prompt triggers a recall hook
+(`spontaneous-recall`) that queries the store for relevant prior memories
+and injects them into context before the model answers. That is one
+database round-trip per prompt, in every project this scope reaches — the
+cost of home scope over project scope: narrower blast radius and no
+cross-project reach (project scope) traded for never having to wire a new
+project by hand (home scope).
+
+**How to mint a memory deliberately.** MCP tools `remember` /
+`remember_batch`, or from a shell with the backend installed:
+`sill notice "<content>" [--force assertive|directive|commissive|expressive|declaration] [--speaker ...]`.
+Store distilled insights, not transcripts — see the Sill checkout's
+`docs/extending.md` for the quality gate a memory is expected to pass
+before it's worth keeping.
+
+**How to turn it off.**
+- *For this session only:* nothing to do — the injected context is passive
+  background; simply don't rely on it.
+- *Narrow it to specific projects instead:* re-run
+  `./install.sh --scope project --hooks-for <path>` for just the projects
+  you want, then remove the home-scope entries below.
+- *Everywhere:* remove the Sill entries from `~/.claude/settings.json` and
+  `~/.codex/hooks.json` (each command points at a path ending in
+  `sill-plugin/hooks/<name>.py` — grep for `sill-plugin` to find them), and
+  delete this block from this file. `./uninstall.sh` in the Sill checkout
+  removes the containers and package but deliberately leaves the MCP
+  server entries in `~/.claude/.mcp.json` / `~/.codex/config.toml` alone,
+  since those files may list other servers — that's a hand-edit.

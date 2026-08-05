@@ -32,7 +32,10 @@ see, in order:
 6. symlink the plugin into `~/.claude/plugins/local/sill-plugin`
 7. idempotently merge the `sill` MCP server entry into `~/.claude/.mcp.json`
    (and `~/.codex/config.toml` if Codex is installed)
-8. optional: wire per-project hook configs (`--hooks-for /path/to/project`)
+8. hook wiring, per `--scope home|project` (default `project`, see "Install
+   scope" below): `project` wires one project's hooks (`--hooks-for
+   /path/to/project`, optional — nothing happens without it); `home`
+   registers hooks user-scope plus an ambient instructions file
 9. print a `./verify.sh` hint
 10. final next-steps banner
 
@@ -49,6 +52,34 @@ current, adapter conformance (the four-slot contract — see
 
 Restart Claude Code (and/or Codex) so the new MCP server entry is picked
 up.
+
+## Install scope
+
+Hooks can be wired at two scopes — a real tradeoff, not a style choice:
+
+```bash
+./install.sh --scope project --hooks-for /path/to/project   # default
+./install.sh --scope home
+```
+
+- **`project`** (default): today's behavior. Hooks go into that one
+  project's `.claude/settings.local.json` and `.codex/hooks.json`.
+  Narrower blast radius, no cross-project mixing — but only wired
+  projects get recall/guards, and each new project needs its own
+  `--hooks-for` run.
+- **`home`**: hooks go into `~/.claude/settings.json` and
+  `~/.codex/hooks.json` (Claude Code's and Codex's own user-scope
+  locations), plus an ambient instructions file
+  (`~/.claude/CLAUDE.md`, from `plugin/claude.home.md.template`,
+  merged in idempotently — your own content is never touched) so every
+  session in every directory carries the Sill background. In exchange:
+  every prompt in every project pays the recall hook's latency, and
+  any project's work can reach the one store.
+
+`--scope home` and `--hooks-for <path>` are additive — you can register
+home-scope hooks and also give one project its own project-scoped
+entries in the same run. An invalid `--scope` value exits non-zero
+naming the valid ones. Full flag reference: `./install.sh --help`.
 
 ## Upgrading
 
@@ -77,29 +108,39 @@ gunzip -c backups/<file>.sql.gz | docker exec -i sill_db psql -U sill -d sill
 
 ### Hook upgrades and `--hooks-for`
 
-`./upgrade.sh` only migrates the database — it never touches a
-project's hook wiring. Picking up hooks added after your project was
-first wired means re-running `./install.sh --hooks-for /path/to/project`,
-and the two files that command writes behave differently on a re-run:
-
-- **`.claude/settings.local.json`** always merges idempotently — new
-  hook entries are appended, existing ones untouched. Re-running
-  `--hooks-for` is enough; nothing else to do.
-- **`.codex/hooks.json`** is skipped entirely if the file already
-  exists (`install.sh`'s own note: `"already exists; leaving as-is
-  (delete to re-render)"`) — a project wired before a hook was added
-  keeps missing it on the Codex side until you delete the file and
-  re-render it.
-
-Check whether a given project's Codex wiring is stale, and fix it if so:
+`./upgrade.sh`'s five numbered steps only migrate the database. Picking
+up hooks added since a project was first wired is a separate,
+independent step — pass `--hooks-for` to `upgrade.sh` itself (this runs
+before, and without needing, any database step):
 
 ```bash
-grep -q "clear-handoff" /path/to/project/.codex/hooks.json \
-  && echo "up to date" || echo "STALE — delete and re-render"
-# if stale:
-rm /path/to/project/.codex/hooks.json
-./install.sh --hooks-for /path/to/project
+./upgrade.sh --hooks-for /path/to/project              # DB upgrade + hook refresh
+./upgrade.sh --hooks-for /path/to/project --hooks-only  # hook refresh only, no db/docker needed
 ```
+
+The two files this touches behave differently, and `upgrade.sh` treats
+them differently on purpose:
+
+- **`.claude/settings.local.json`** always merges idempotently — new
+  hook entries are appended, existing ones untouched. Nothing else to
+  do; this happens automatically.
+- **`.codex/hooks.json`** is the one `install.sh` only ever writes
+  *once*, silently leaving it alone on every later run — a project
+  wired before a hook was added or changed would otherwise miss that
+  update on the Codex side forever. `upgrade.sh --hooks-for` renders
+  the current template and diffs it against what's there. Identical:
+  nothing happens. Different: **the diff is printed** and the file is
+  left untouched unless you also pass `--force-hooks` — never a silent
+  overwrite of a file you may have hand-edited:
+
+```bash
+./upgrade.sh --hooks-for /path/to/project --hooks-only               # shows a diff if stale, changes nothing
+./upgrade.sh --hooks-for /path/to/project --hooks-only --force-hooks # applies it
+```
+
+Codex also SHA-256-pins each hook command, so an overwrite invalidates
+that trust and Codex will re-prompt for approval on its next run — see
+`docs/adapters.md`.
 
 ---
 
@@ -253,13 +294,21 @@ This writes two files:
 - `/path/to/your/project/.claude/settings.local.json` — same hooks
   merged into the existing `hooks` block (created if absent).
 
-Re-running is safe on both sides, but only the Claude Code side is
-idempotent in the useful sense of also picking up new hooks — existing
-entries are preserved and Sill's are deduplicated, and a later Sill
-version's new hooks get merged in on the next run. The Codex side is
-all-or-nothing: once `.codex/hooks.json` exists, re-running
-`--hooks-for` leaves it exactly as it was. See "Hook upgrades and
-`--hooks-for`" under Upgrading above for the delete-and-re-render fix.
+Re-running `install.sh --hooks-for` is safe on both sides, but only the
+Claude Code side is idempotent in the useful sense of also picking up
+new hooks — existing entries are preserved and Sill's are deduplicated,
+and a later Sill version's new hooks get merged in on the next run. The
+Codex side is all-or-nothing: once `.codex/hooks.json` exists,
+re-running `install.sh --hooks-for` leaves it exactly as it was, on
+purpose — `install.sh` only ever does *first* wiring. See "Hook
+upgrades and `--hooks-for`" under Upgrading above for `upgrade.sh
+--hooks-for`, which is the re-render path: it diffs the existing file
+against the current template and shows you what changed instead of
+silently doing nothing.
+
+This is per-project wiring — `--scope project`, the default. See
+"Install scope" above for `--scope home`, which registers hooks
+user-wide instead of per-project.
 
 ---
 
