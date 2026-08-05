@@ -359,7 +359,7 @@ async def _dispatch_tool(client: CognitiveMemory, name: str, args: dict[str, Any
         return results
 
     # =========================================================================
-    # SELF-DIRECTION: Tools for Sili to participate in memory curation
+    # SELF-DIRECTION: Tools for the agent to participate in memory curation
     # =========================================================================
 
     if name == "forget":

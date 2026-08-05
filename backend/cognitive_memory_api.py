@@ -1241,7 +1241,7 @@ class CognitiveMemory:
         )
 
     # =========================================================================
-    # SELF-DIRECTION: Tools for Sili to participate in memory curation
+    # SELF-DIRECTION: Tools for the agent to participate in memory curation
     # =========================================================================
 
     async def forget(self, memory_id: UUID, *, reason: str = "") -> bool:
