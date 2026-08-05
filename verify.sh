@@ -5,7 +5,7 @@
 #
 # Checks:
 #   1. docker compose ps shows db + embeddings healthy.
-#   2. sill-mcp --help exits 0.
+#   2. sill-mcp answers a real MCP `initialize` handshake over stdio.
 #   3. SELECT count(*) FROM memories returns >= 22 (seed loaded).
 #   4. plugin/hooks/response-patterns.py exits 0 on a canned Stop event.
 #   5. schema_migrations matches backend/migrations/ (schema level current).
@@ -67,6 +67,134 @@ say() {
   printf '\n=== %s ===\n' "$*"
 }
 
+# Speak MCP to the installed server and require a real answer.
+#
+# Check 2 used to run `sill-mcp --help`, which exits before importing the MCP
+# SDK at all. During the v0.2.0 clean-machine rehearsal that check reported
+# green on a server that could not serve a single tool: an unpinned
+# `mcp>=1.0.0` had resolved to 2.x, which removed the `Server.list_tools()`
+# API sill_mcp_server.py registers through, and the server died on its first
+# handshake with `'Server' object has no attribute 'list_tools'`. The
+# dependency is pinned now (backend/pyproject.toml), but the pin only blocks
+# that one resolution — `--help` would exit 0 again the next time the SDK
+# moves, and a check that stays green over a dead server is worse than no
+# check. So: start it, send `initialize`, require a well-formed result naming
+# this server, and kill it.
+#
+# SILL_MCP_CMD overrides the command (used by the test suite to point at
+# stubs that fail in specific ways). SILL_VERIFY_MCP_TIMEOUT_S bounds the
+# wait — the server opens a database connection before it will answer, so
+# this is not instant.
+mcp_handshake() {
+  SILL_MCP_CMD="${SILL_MCP_CMD:-sill-mcp}" \
+  SILL_VERIFY_MCP_TIMEOUT_S="${SILL_VERIFY_MCP_TIMEOUT_S:-20}" \
+  python3 <<'PY'
+import json
+import os
+import shlex
+import subprocess
+import sys
+import threading
+
+cmd = shlex.split(os.environ["SILL_MCP_CMD"])
+budget = float(os.environ["SILL_VERIFY_MCP_TIMEOUT_S"])
+
+request = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "verify.sh", "version": "1"},
+    },
+}
+
+
+def die(message, proc=None):
+    print(f"    {message}", file=sys.stderr)
+    if proc is not None:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        err = (proc.stderr.read() or "").strip() if proc.stderr else ""
+        if err:
+            print("    the server said:", file=sys.stderr)
+            for line in err.splitlines()[-8:]:
+                print(f"      {line}", file=sys.stderr)
+    sys.exit(1)
+
+
+try:
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True,
+    )
+except OSError as exc:
+    print(f"    could not start {cmd[0]!r}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+# One reply, or nothing. A reader thread is the stdlib's only way to put a
+# deadline on a blocking read: a server that accepts the request and then
+# hangs must fail this check, not hang verify.sh.
+reply = []
+
+
+def read_reply():
+    for line in proc.stdout:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue          # tolerate stray non-protocol output on stdout
+        if isinstance(obj, dict) and obj.get("id") == 1:
+            reply.append(obj)
+            return
+
+
+reader = threading.Thread(target=read_reply, daemon=True)
+reader.start()
+
+try:
+    proc.stdin.write(json.dumps(request) + "\n")
+    proc.stdin.flush()
+except (BrokenPipeError, OSError):
+    die("the server closed its input before the handshake was sent", proc)
+
+reader.join(budget)
+
+if not reply:
+    if proc.poll() is not None:
+        die(f"the server exited ({proc.returncode}) without answering `initialize`", proc)
+    die(f"no answer to `initialize` within {budget:.0f}s", proc)
+
+obj = reply[0]
+if "error" in obj:
+    die(f"the server refused `initialize`: {obj['error']}", proc)
+
+result = obj.get("result")
+if not isinstance(result, dict):
+    die(f"malformed handshake reply: {obj}", proc)
+info = result.get("serverInfo") or {}
+if info.get("name") != "sill":
+    die(f"handshake answered by {info.get('name')!r}, expected 'sill'", proc)
+if "protocolVersion" not in result:
+    die(f"handshake reply names no protocolVersion: {result}", proc)
+
+print(f"{info.get('name')} {info.get('version', '?')} "
+      f"(MCP {result['protocolVersion']})")
+
+try:
+    proc.stdin.close()
+    proc.wait(timeout=5)
+except Exception:
+    proc.kill()
+PY
+}
+
 # --- check 1 -------------------------------------------------------------------
 say "Check 1/6: docker compose services healthy"
 for svc in db embeddings; do
@@ -90,14 +218,14 @@ for line in raw.splitlines():
 done
 
 # --- check 2 -------------------------------------------------------------------
-say "Check 2/6: sill-mcp --help"
-if ! command -v sill-mcp >/dev/null 2>&1; then
+say "Check 2/6: sill-mcp answers an MCP initialize handshake"
+if ! command -v "${SILL_MCP_CMD:-sill-mcp}" >/dev/null 2>&1; then
   fail "sill-mcp not on PATH (is the backend installed and ~/.local/bin on PATH?)"
 fi
-if sill-mcp --help >/dev/null 2>&1; then
-  pass "sill-mcp --help exits 0"
+if handshake="$(mcp_handshake)"; then
+  pass "MCP handshake answered by $handshake"
 else
-  fail "sill-mcp --help returned non-zero"
+  fail "sill-mcp did not answer an MCP initialize handshake (see above). Reinstall the backend ('pip install -e backend') and re-run; if it persists, run 'sill-mcp' by hand and read its first line of output."
 fi
 
 # --- check 3 -------------------------------------------------------------------

@@ -3,11 +3,21 @@ carry the platform-specific keys an operator needs, and neither leaks a
 personal path or name. Companion doc (docs/beats.md) exists and covers the
 interval env var and the mandatory permissions section.
 
-No subprocess spawning, no DB, no network — pure file/text checks.
+Almost all of it is pure file/text checks — no DB, no network. The one
+exception is at the bottom: `docs/RELEASE-REHEARSAL.md` listed "the launchd
+and systemd templates were not loaded, so the token substitution has never
+been executed" as unverified, and no amount of shape-checking closes that.
+So on macOS the rendered plist is `launchctl bootstrap`ed under a throwaway
+label with a harmless program, confirmed loaded, and booted out again.
 """
 
+import os
 import plistlib
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEDULING = REPO_ROOT / "scheduling"
@@ -153,4 +163,79 @@ def test_beats_doc_permissions_section_precedes_the_scheduling_section():
     assert scheduling_idx != -1
     assert permissions_idx < scheduling_idx, (
         "the permissions section must come before the scheduling section"
+    )
+
+
+# --- the plist actually loads --------------------------------------------------
+
+
+needs_launchctl = pytest.mark.skipif(
+    os.uname().sysname != "Darwin" or shutil.which("launchctl") is None,
+    reason="launchd is macOS-only; on other hosts the plist is untestable "
+           "beyond its shape (and the systemd unit is untestable here for the "
+           "mirror-image reason)",
+)
+
+
+@needs_launchctl
+def test_the_rendered_plist_loads_and_unloads(tmp_path):
+    """`scheduling/README.md`'s own substitute-and-load steps, run.
+
+    Deliberately harmless: the Label is a throwaway, the program is
+    `/bin/echo` rather than the beat worker, and the plist lives in a temp
+    directory rather than `~/Library/LaunchAgents`, so a failure between
+    bootstrap and bootout cannot survive a reboot. RunAtLoad still fires,
+    which is what proves ProgramArguments and the log-path token were
+    substituted into something launchd can really run.
+    """
+    label = f"com.sill.test-{os.getpid()}"
+    logs = tmp_path / "logs"
+    workdir = tmp_path / "dir"
+    logs.mkdir()
+    workdir.mkdir()
+
+    rendered = (PLIST.read_text()
+                .replace("{{SILL_PYTHON}}", "/bin/echo")
+                .replace("{{SILL_DIR}}", str(workdir))
+                .replace("{{SILL_LOG_DIR}}", str(logs))
+                .replace("{{SILL_BEAT_CLI}}", "/bin/echo")
+                .replace("com.sill.beat-worker", label))
+    assert "{{" not in rendered, "a token survived substitution"
+    plist_path = tmp_path / f"{label}.plist"
+    plist_path.write_text(rendered)
+
+    domain = f"gui/{os.getuid()}"
+    booted = subprocess.run(["launchctl", "bootstrap", domain, str(plist_path)],
+                            capture_output=True, text=True, timeout=60)
+    try:
+        assert booted.returncode == 0, (
+            "launchd refused the rendered plist — this is the check that shape "
+            f"tests cannot make: {booted.stderr.strip() or booted.stdout.strip()}"
+        )
+        printed = subprocess.run(["launchctl", "print", f"{domain}/{label}"],
+                                 capture_output=True, text=True, timeout=60)
+        assert printed.returncode == 0, printed.stderr
+        assert "/bin/echo" in printed.stdout
+        # RunAtLoad means the program has already run by now; its arguments
+        # landing in StandardOutPath prove both the ProgramArguments array and
+        # the {{SILL_LOG_DIR}} token survived into something launchd honours.
+        stdout_log = logs / "beat-worker-launchd-stdout.log"
+        for _ in range(50):
+            if stdout_log.exists() and stdout_log.read_text().strip():
+                break
+            subprocess.run(["sleep", "0.1"], timeout=5)
+        assert stdout_log.exists(), (
+            f"RunAtLoad produced no {stdout_log.name} — the log-path token did "
+            "not resolve to somewhere launchd could write"
+        )
+        assert "--mode beat" in stdout_log.read_text()
+    finally:
+        subprocess.run(["launchctl", "bootout", domain, str(plist_path)],
+                       capture_output=True, text=True, timeout=60)
+
+    gone = subprocess.run(["launchctl", "print", f"{domain}/{label}"],
+                          capture_output=True, text=True, timeout=60)
+    assert gone.returncode != 0, (
+        f"{label} is still loaded after bootout — a test must not leave a "
+        "launch agent behind"
     )

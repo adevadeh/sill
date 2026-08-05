@@ -268,6 +268,84 @@ def test_spawn_beat_exports_journal_dirs_derived_from_full_voice_config(tmp_path
     assert captured_env.get("SILL_DETACHED_BEAT") == "1"
 
 
+def test_spawn_beat_does_not_restrict_the_child_to_project_settings(tmp_path, monkeypatch):
+    """A beat reaches memory through MCP, and MCP is registered at user scope.
+
+    `install.sh` step 7 registers the server with
+    `claude mcp add --scope user sill -- sill-mcp`, so the entry lives in the
+    operator's user-scope registry. The v0.2.0 rehearsal could not see whether
+    a beat child picks that up, because the shim it used to keep the beats out
+    of the operator's settings injected `--setting-sources project,local` —
+    which also excludes user-scope MCP servers, and the beat duly reported the
+    sill tools as not connected. Spawning a real beat through this function
+    with no shim answered it: 38 `mcp__sill__*` tools visible to the child,
+    `mcp__sill__get_health` called and answered (confirmed in the child's own
+    session jsonl, not just its prose).
+
+    That works *because* the spawn passes no `--setting-sources`. Adding one
+    here — an easy-looking hardening — would silently cut every beat off from
+    memory while leaving exit codes, transcripts, and output files identical.
+    Hence this pin."""
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "analyst.md").write_text("Standing prompt.\n")
+    (tmp_path / "notes").mkdir()
+
+    voice = bw.Voice(name="analyst", prompt="prompts/analyst.md",
+                     transcripts="logs/analyst", output_glob="notes/analyst-*.md",
+                     kickoff="Begin.")
+    captured_cmd = []
+
+    def fake_run(cmd, **kwargs):
+        captured_cmd.extend(cmd)
+        (tmp_path / "notes" / "analyst-001.md").write_text("beat output")
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(bw.subprocess, "run", fake_run)
+    success, _duration, _transcript = bw.spawn_beat(voice, [voice])
+
+    assert success is True
+    assert not any("setting-sources" in str(arg) for arg in captured_cmd), (
+        "spawn_beat restricted the child's settings sources; user scope is "
+        f"where the MCP server is registered — argv was {captured_cmd[:3]}…"
+    )
+    assert captured_cmd[:2] == [bw.CLI, "--print"]
+
+
+def test_spawn_beat_forwards_the_parent_environment_to_the_child(tmp_path, monkeypatch):
+    """Half of how a beat's bare `sill notice` finds the right database.
+
+    `sill.py` reads `SILL_DB_CONTAINER`/`SILL_DB_USER`/`SILL_DB_NAME` from its
+    process environment, and a beat child never sets them itself — so this
+    wholesale forward is the only route by which a beat's mint reaches a
+    non-default container. The rehearsal saw the effect (a bare `sill notice`
+    inside a beat hit the rehearsal database, while the same command from the
+    operator's shell hit the default name and failed) and could not explain
+    it. The other half is `worker.py`'s module-level `load_dotenv()`, which
+    puts `backend/.env` into the worker's own environment before this dict is
+    built — pinned in test_env_and_mcp_wiring.py."""
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "analyst.md").write_text("Standing prompt.\n")
+    (tmp_path / "notes").mkdir()
+    monkeypatch.setenv("SILL_DB_CONTAINER", "some_other_db")
+
+    voice = bw.Voice(name="analyst", prompt="prompts/analyst.md",
+                     transcripts="logs/analyst", output_glob="notes/analyst-*.md",
+                     kickoff="Begin.")
+    captured_env = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        (tmp_path / "notes" / "analyst-001.md").write_text("beat output")
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(bw.subprocess, "run", fake_run)
+    bw.spawn_beat(voice, [voice])
+
+    assert captured_env.get("SILL_DB_CONTAINER") == "some_other_db"
+
+
 def test_spawn_beat_returns_false_when_exit_0_produces_no_output_file(tmp_path, monkeypatch):
     """The output-verification guard's whole point (beat_worker.py's
     produced_output() check inside spawn_beat, ~lines 536-543): a headless

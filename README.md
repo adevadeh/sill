@@ -49,10 +49,10 @@ Then:
 ./verify.sh
 ```
 
-Six smoke checks: db/embeddings healthy, `sill-mcp --help` runs, seed
-loaded (>= 22 memories), one hook parses a canned event, schema level
-current, adapter conformance (the four-slot contract — see
-`docs/adapters.md`). Exits 0 on green.
+Six smoke checks: db/embeddings healthy, `sill-mcp` answers a real MCP
+`initialize` handshake over stdio, seed loaded (>= 22 memories), one hook
+parses a canned event, schema level current, adapter conformance (the
+four-slot contract — see `docs/adapters.md`). Exits 0 on green.
 
 Restart Claude Code (and/or Codex) so the new MCP server entry is picked
 up.

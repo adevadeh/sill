@@ -56,9 +56,11 @@ Then:
 echo "exit: $?"
 ```
 
-Six checks: services healthy, `sill-mcp --help`, seed loaded, one hook
-parsing a canned event, schema level current, adapter conformance. Success
-is one `pass:` line per check and `All checks passed.` at the end.
+Six checks: services healthy, the MCP server answering a real `initialize`
+handshake over stdio, seed loaded, one hook parsing a canned event, schema
+level current, adapter conformance. Success is one `pass:` line per check
+and `All checks passed.` at the end; check 2's line names the server and
+version that answered.
 
 A failure names its own fix and stops at the first one. Its shape:
 

@@ -4,6 +4,13 @@
 **Ref:** `275bd70` (branch `feat/v0.2-release`), rehearsed from a fresh clone
 **Question:** does "please get this working" actually work, for someone who
 has never run this?
+**Amended 2026-08-05, same branch:** §4 originally listed eight unverified
+items. Five of them turned out to be attemptable on this machine, and
+attempting them found three more defects — a Ctrl-C that crashed, a smoke
+check that could not see a dead server, and a mint path whose database
+coordinates arrived through an unrelated module's import side effect. §4 is
+now the four that genuinely cannot be closed here; §5 is the record of the
+five that could.
 
 Every plan in the v0.2 series verified its own phases against a development
 machine that already had a live Sill stack, a populated tool-permission
@@ -97,7 +104,10 @@ Host: macOS 25.5.0, Apple Silicon (`arm64`). Docker via OrbStack, server
    `sill_embeddings` would have aimed a `docker compose up` at the live
    stack's containers. The `.env.example` finding at the end of §3 is
    therefore argued from the compose file (four `container_name:` keys, one
-   of them documented) rather than from a crash.
+   of them documented) rather than from a crash. *(Since narrowed: `docker
+   compose config` — which starts nothing — resolves all four default names
+   and three host ports, and three of the names and all three ports are
+   occupied on this host. See §4, item 2.)*
 
 ---
 
@@ -217,7 +227,8 @@ single tool.
 **Verified:** reinstalled (resolved 1.29.0); the handshake now returns
 `{"jsonrpc":"2.0","id":1,"result":{…"serverInfo":{"name":"sill","version":"0.2.0"}}}`,
 and `claude mcp list` reports Connected.
-**Not fixed:** check 2 still only runs `--help`. See §4.
+**Check 2 fixed afterwards:** it now performs a real `initialize` handshake
+instead of `--help`. See §5, item 4.
 
 ### F5 — the docs told operators to run an interpreter that does not exist
 
@@ -311,62 +322,154 @@ full set, and README has a worked side-by-side block.
 
 ## 4. Explicitly unverified
 
-Nothing below was observed to work. It is listed so the first operator knows
-where they are still the first.
+Four items. This list was eight. The other four were not unverifiable — they
+were *unattempted*, which is a different thing, and shipping the second while
+writing the first is the overclaim this project's receipt discipline exists to
+prevent. §5 records what happened when they were attempted, including the
+three defects they turned up.
+
+What remains is here because of how the world is, not how much effort was
+spent.
 
 1. **A charter, and a name.** Phase 8's substance is prose in a person's own
    words and a name they chose. A placeholder file with a timestamp was
    produced to exercise the mechanism; the act itself is not rehearsable by
    anything, and no agent should simulate it.
 
-2. **Phase 9's schedule.** Deliberately not installed — the phase's own
-   done-condition is that *nothing is scheduled yet*. The launchd and systemd
-   templates in `scheduling/` were not loaded, so the token substitution has
-   never been executed on a clean machine. `test_scheduling_templates.py`
-   covers their shape, not their loading.
+2. **A default-named, default-ported install, end to end.** `docker compose
+   config` with no `.env` present resolves the four shipped container names —
+   `sill_db`, `sill_embeddings`, `sill_rabbitmq`, `sill_maintenance_worker` —
+   and host ports 5432 / 5672 / 15672. On this host, three of those names and
+   all three ports are already held by an unrelated running stack. (That is at
+   least an improvement on §1's item 6, which could only argue the collision
+   from the compose file: it is now observed, without aiming a `docker compose
+   up` at anything live.) Freeing the defaults means stopping that stack — and
+   it is the memory store behind a supervised worker that fires unattended
+   every two hours under a restart-on-exit supervisor, so the window in which
+   it is down is a window in which an unattended job runs against a store that
+   is not there. That trade is not worth one observation, so this stays open,
+   deliberately. The collision-avoiding configuration is the path that got
+   exercised end to end; the default one did not.
 
-3. **Ctrl-C stopping the worker.** Phase 6 says to press Ctrl-C. This
-   rehearsal ran the worker detached, where SIGINT is ignored by inheritance,
-   and stopped it with SIGTERM. `beat_worker.py` installs no
-   `KeyboardInterrupt` handler, so a real Ctrl-C most likely prints a
-   traceback and, mid-beat, may not return the terminal until the beat's
-   timeout (30 minutes by default). Unconfirmed — it needs a TTY.
+3. **Linux, and any non-Apple-Silicon host — narrowed.** Every *measurement*
+   in this document is from one macOS ARM machine running emulated
+   `linux/amd64` containers, and F1's 903 s in particular should be much
+   smaller elsewhere. But "nothing is tested on Linux" would be false: CI runs
+   two `ubuntu-latest` jobs on every push — the full backend test suite on
+   Python 3.10 and 3.12, and `schema-identity`, which builds the database
+   image, boots a fresh container and a simulated-v0.1.0 baseline one, runs
+   `./upgrade.sh` on the baseline, diffs the two `pg_dump` schemas, and
+   exercises three live DB call shapes. So the container, schema, migration,
+   upgrade and Python paths are exercised on Linux x86 continuously. What is
+   untested there is the operator-facing shell: `install.sh` end to end, the
+   hook wiring into real agent harnesses, and the beat worker.
 
-4. **Whether a beat child can reach memory through MCP.** The shim that kept
-   the beats out of the operator's user-scope settings also excluded
-   user-scope MCP servers, and the analyst beat reported the `sill` tools as
-   not connected. On a real install the entry F3 now writes is user-scope, so
-   it should be there — *should*, not *was observed to be*. This is the one
-   remaining question that materially affects what a beat can do.
-
-5. **`verify.sh` check 2 still cannot see a broken MCP server.** F4's pin
-   prevents the specific resolution that broke it; the check that reported
-   green throughout is unchanged, and `--help` will exit 0 the next time the
-   SDK moves. A handshake-based check is the obvious fix and is not in this
-   change.
-
-6. **Where the beat's mint found the right database.** The analyst's beat ran
-   a bare `sill notice` (confirmed from its session transcript — no
-   environment prefix) and the row landed in the rehearsal store. The same
-   bare command from the operator shell, in the same directory, fails against
-   the default container name — reproduced twice. The mechanism was not
-   determined. Recorded as an open question rather than explained.
-
-7. **A truly clean machine.** The six leaks in §1 are the honest bound on
-   everything above. In particular: no first boot was observed on a host
-   without an existing Sill, so the *default* container names and ports —
-   what an actual new operator uses — were never exercised end to end. The
-   collision-avoiding config was.
-
-8. **Linux, and any non-Apple-Silicon host.** Every measurement here is from
-   one macOS ARM machine running emulated `linux/amd64` containers. F1's
-   903 s in particular should be expected to be much smaller elsewhere.
+4. **The systemd unit.** Its launchd counterpart is now rendered, loaded,
+   confirmed and unloaded on every macOS test run (§5, item 2), and the same
+   cannot be done for `sill-beat-worker.service.template` on a machine with no
+   systemd. `test_scheduling_templates.py` covers its shape — `Restart`,
+   `RestartSec`, an explicit `PATH`, an absolute `SILL_BEAT_CLI`, and that it
+   parses — but no `systemctl` has ever been handed it.
 
 ---
 
-## 5. If you are the first operator
+## 5. Closed afterwards, and what closing them found
+
+Five items came off the list above. Three of them were closed by fixing
+something.
+
+1. **A beat child does reach memory through MCP.** *(was item 4 — "the one
+   remaining question that materially affects what a beat can do")* One real
+   beat was spawned through `beat_worker.spawn_beat()` itself, with no
+   `--setting-sources` shim, and asked to report what it could see. It
+   reported 38 `mcp__sill__*` tools and called the read-only
+   `mcp__sill__get_health`. The count is the child's own report; the call is
+   not — `tool_use: mcp__sill__get_health` and its `tool_result` are in the
+   child's session jsonl, which is why this counts as observed rather than
+   claimed. The rehearsal's shim was the whole cause of the
+   original negative: `--setting-sources project,local` excludes user scope,
+   which is where the MCP server is registered. Pinned by
+   `test_spawn_beat_does_not_restrict_the_child_to_project_settings`, because
+   adding a `--setting-sources` flag to that spawn would cut every beat off
+   from memory while leaving exit codes, transcripts and output files
+   identical. *Bound:* on this host the user-scope `sill` entry points at the
+   operator's own server rather than a freshly installed `sill-mcp`, so what
+   is proven is the scope question. That the shipped server answers is item 3
+   below; that `install.sh` registers it at user scope is pinned by
+   `test_install_prefers_the_claude_cli_for_mcp_registration`.
+
+2. **The launchd template loads.** *(was item 2)* Rendered through
+   `scheduling/README.md`'s own `sed` invocation, with a throwaway `Label` and
+   `/bin/echo` in place of the interpreter: no `{{TOKEN}}` survived,
+   `plutil -lint` passed, `launchctl bootstrap gui/<uid>` returned 0,
+   `launchctl print` showed the service with its five-element argument array,
+   and `RunAtLoad` fired — `-m worker --mode beat` appeared in the
+   `StandardOutPath` log, which is what proves the log-path token resolved to
+   somewhere launchd can really write. `launchctl bootout` returned 0 and the
+   subsequent `launchctl print` failed with *Could not find service*. Now a
+   test (`test_the_rendered_plist_loads_and_unloads`, macOS-only, throwaway
+   label, `try/finally` bootout, plist in a temp dir so nothing can survive a
+   reboot).
+
+3. **Ctrl-C now stops the worker cleanly — it did not.** *(was item 3;
+   **defect found and fixed**)* Under a pty, with SIGINT delivered to the
+   foreground process group the way a terminal's ^C does it, the worker
+   printed an eleven-frame Python traceback ending in `KeyboardInterrupt` and
+   died on the signal — both mid-beat and while sleeping between beats. The
+   runbook's own way of stopping a supervised first run looked like a crash.
+   (The other half of the old guess was wrong: it returned the terminal in
+   0.05 s, not at the 30-minute beat timeout, because `subprocess.run()` kills
+   its child on the way out.) `run_beat_loop()` now catches `KeyboardInterrupt`
+   and logs `Interrupted (Ctrl-C) — beat worker stopped. Rotation stays on
+   [<voice>]`; observed after the fix: exit 0, no traceback, no orphaned child.
+   Three pty tests in `test_beat_worker_interrupt.py`; two of them fail on the
+   pre-fix code.
+
+4. **`verify.sh` check 2 speaks MCP now.** *(was item 5; **known gap, fixed**)*
+   The check starts the server, sends a real `initialize` over stdio, requires
+   a well-formed result naming this server, and kills it — with a timeout, so
+   a server that accepts the request and hangs fails rather than hanging
+   verify.sh. Observed both ways on this machine: against the installed
+   `sill-mcp` pointed at a live database, `sill 0.2.0 (MCP 2024-11-05)`,
+   exit 0; against the same binary with no reachable Sill database, exit 1
+   printing the server's own words — `the server exited (1) without answering
+   'initialize'` / `role "sill" does not exist`. Seven tests drive it against
+   stub servers that each fail in one specific way, including F4's verbatim
+   `'Server' object has no attribute 'list_tools'` and a stub that exits 0
+   having said nothing — the shape the old `--help` check called a pass.
+
+5. **Where the beat's mint found the right database.** *(was item 6; explained,
+   and the fragility behind it **fixed**)* `sill-worker` imports `worker.py`,
+   whose module-level `load_dotenv()` resolves `.env` against **worker.py's own
+   directory** rather than the working directory — so `backend/.env` landed in
+   the worker process's environment; `beat_worker.spawn_beat()` then hands the
+   child `{**os.environ, …}` wholesale, so the beat's bare `sill notice` read
+   `SILL_DB_CONTAINER` from a file nothing in the mint path had ever read.
+   Confirmed by reproduction: importing a copy of `worker.py` from an
+   unrelated working directory pulls a neighbouring `backend/.env` into
+   `os.environ`. From the operator's shell nothing loads that file, so the same
+   command fell back to `sill_db` — which on this host is a database with no
+   `sill` role, exactly the error the rehearsal saw twice.
+
+   That is an explanation, and it was also a defect: a worker started as
+   `python -m beat_worker` imports `worker` never, and would have minted
+   against the defaults — on a machine with a second Sill, into a different
+   install's container. `sill.py` now loads `backend/.env` itself, with
+   Compose's precedence (an exported variable still wins), the same way
+   `verify.sh`, `upgrade.sh` and `memory_health.py` already do. Five tests.
+
+**Still not closed, and worth naming:** the guards
+(`plugin/hooks/stored-slot-guard.py` and friends) reach the database by the
+same `docker exec "$SILL_DB_CONTAINER"` route and still read only the process
+environment — F8 fixed that with a diagnostic in the doc rather than a code
+change, and this change does not revisit it.
+
+---
+
+## 6. If you are the first operator
 
 Read §4 first, then `docs/onboarding/README.md`. If a phase behaves
 differently than its doc says, that is worth reporting — the nine findings
 above were all found by exactly that, and every one of them had been shipped
-past by people who believed the document.
+past by people who believed the document. The three in §5 were found by
+distrusting this document's own word "unverified".

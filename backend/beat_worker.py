@@ -587,6 +587,15 @@ def run_beat_loop() -> None:
     """Fire one beat every INTERVAL_SECONDS, cycling through the configured
     voices in order. Runs forever; the process is expected to live under a
     supervisor that restarts it on crash.
+
+    Ctrl-C stops it cleanly. That is not decoration: the supervised first run
+    in docs/onboarding/03-first-beats.md is a foreground run an operator is
+    told to end with Ctrl-C, and until this handler existed that documented
+    stop printed an eleven-frame traceback ending in `KeyboardInterrupt` and
+    exited on the signal — observed under a pty, both mid-beat and while
+    sleeping between beats. A stop the runbook prescribes must not look like
+    a crash, least of all on the phase where an operator is learning what
+    healthy output is.
     """
     _configure_logging()
     voices = load_voices(_config_path())
@@ -602,22 +611,34 @@ def run_beat_loop() -> None:
         logger.info(f"  Voice [{v.name}]: prompt={v.prompt}, transcripts={v.transcripts}")
     logger.info(f"  Guard scope (SILL_BEAT_JOURNAL_DIRS for each child): {journal_dirs_for_voices(voices)!r}")
 
-    while True:
-        beat_start = time.time()
-        index = read_state(state_path) % len(voices)
-        voice = voices[index]
+    # KeyboardInterrupt is a BaseException, so spawn_beat()'s `except
+    # Exception` deliberately does not swallow it — a Ctrl-C during a beat
+    # propagates out of subprocess.run() (which kills the child agent CLI on
+    # its way out) and lands here. Rotation is left wherever it was: an
+    # interrupted beat did not finish, so it must not be counted as taken.
+    try:
+        while True:
+            beat_start = time.time()
+            index = read_state(state_path) % len(voices)
+            voice = voices[index]
 
-        success, _duration, _transcript = spawn_beat(voice, voices)
-        advance_if(state_path, index=index, n_voices=len(voices), success=success)
-        if success and POST_HOOK:
-            _run_post_hook(POST_HOOK)
+            success, _duration, _transcript = spawn_beat(voice, voices)
+            advance_if(state_path, index=index, n_voices=len(voices), success=success)
+            if success and POST_HOOK:
+                _run_post_hook(POST_HOOK)
 
-        beat_total = time.time() - beat_start
-        sleep_time = max(0, INTERVAL_SECONDS - beat_total)
-        if sleep_time > 0:
-            next_index = read_state(state_path) % len(voices)
-            logger.info(f"Sleeping {sleep_time:.0f}s until next beat [{voices[next_index].name}]...")
-            time.sleep(sleep_time)
+            beat_total = time.time() - beat_start
+            sleep_time = max(0, INTERVAL_SECONDS - beat_total)
+            if sleep_time > 0:
+                next_index = read_state(state_path) % len(voices)
+                logger.info(f"Sleeping {sleep_time:.0f}s until next beat [{voices[next_index].name}]...")
+                time.sleep(sleep_time)
+    except KeyboardInterrupt:
+        next_index = read_state(state_path) % len(voices)
+        logger.info(
+            "Interrupted (Ctrl-C) — beat worker stopped. Rotation stays on "
+            f"[{voices[next_index].name}]; starting the worker again resumes there."
+        )
 
 
 if __name__ == "__main__":

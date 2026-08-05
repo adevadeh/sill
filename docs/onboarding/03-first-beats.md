@@ -99,6 +99,18 @@ covers diagnosis.
 Once each voice has logged `Beat complete` once, press Ctrl-C. Interrupting
 an in-flight later beat is expected, not a failure.
 
+Ctrl-C prints one line and exits 0:
+
+```
+Interrupted (Ctrl-C) — beat worker stopped. Rotation stays on [analyst]; starting the worker again resumes there.
+```
+
+The interrupted beat does not count as taken, and its agent-CLI child is
+killed along with the worker. A Python traceback here instead means you are
+on a build from before this was checked against a real terminal — the worker
+had no interrupt handler until then, and the documented way to stop it
+printed a `KeyboardInterrupt` stack.
+
 ## Read what they wrote
 
 ```bash

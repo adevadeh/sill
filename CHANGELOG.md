@@ -176,6 +176,30 @@ including what it could not verify, in `docs/RELEASE-REHEARSAL.md`:
   measured 903 s first boot; the `~300MB` model figure (measured: 1.2 GB); and
   a stale `v0.1.0` status line.
 
+**Found by closing that rehearsal's "explicitly unverified" list** — five of
+its eight items were attemptable after all, and attempting them found three
+more defects (§5 of the same document):
+
+- **Ctrl-C crashed the beat worker.** `docs/onboarding/03-first-beats.md`
+  tells an operator to stop a supervised run with Ctrl-C; under a pty that
+  printed an eleven-frame traceback ending in `KeyboardInterrupt`, both
+  mid-beat and between beats. `run_beat_loop()` now catches it, logs which
+  voice rotation is holding on, and exits 0.
+- **`verify.sh` check 2 could not see a broken MCP server.** It ran
+  `sill-mcp --help`, which exits before the MCP SDK is imported — the reason
+  the check above stayed green throughout the `list_tools` outage. It now
+  starts the server, completes a real `initialize` handshake over stdio
+  within a timeout, requires a result naming this server, and reports the
+  server's own error when there isn't one.
+- **`sill notice` never read `backend/.env`.** Its database coordinates
+  reached a beat only because `worker.py`'s module-level `load_dotenv()`
+  resolves `.env` against its own directory and `beat_worker.spawn_beat()`
+  forwards the whole environment to the child — so the mint worked inside a
+  beat and failed from the operator's shell, and a worker started as
+  `python -m beat_worker` would have minted against the default container
+  (on a two-install machine, someone else's). The mint path now loads
+  `backend/.env` itself, with Compose's precedence.
+
 - `get_embedding` no longer fails on content containing literal backslashes
   (encoding-safe `convert_to` replaces the escape-interpreting `::bytea` cast).
 - Access telemetry decoupled from importance (removed the compounding

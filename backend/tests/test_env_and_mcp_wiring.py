@@ -1,8 +1,8 @@
-"""Two defects the clean-machine acceptance rehearsal found, pinned.
+"""Four defects the clean-machine acceptance rehearsal found, pinned.
 
-Both were invisible on a development machine and fatal on a fresh one, and
-both had the same shape: a step reported success while writing its effect
-somewhere nothing reads.
+All four were invisible on a development machine and fatal (or silently
+wrong) on a fresh one, and the first three have the same shape: a step
+reported success while writing — or reading — somewhere nothing else looks.
 
 1. **`verify.sh` and `upgrade.sh` ignored `backend/.env`.** Check 1 runs
    `docker compose` from `backend/`, so Compose loads `.env` and check 1 goes
@@ -20,17 +20,37 @@ somewhere nothing reads.
    the loop the runbook's phase-2 remedy ("re-run ./install.sh and read step
    7's output") cannot break.
 
-Neither test needs docker or a database.
+3. **`verify.sh` check 2 could not see a broken MCP server.** It ran
+   `sill-mcp --help`, which exits before importing the MCP SDK. When an
+   unpinned `mcp>=1.0.0` resolved to 2.x — removing the `Server.list_tools()`
+   API the server registers through — check 2 stayed green over a server that
+   died on its first handshake. The pin in backend/pyproject.toml blocks that
+   one resolution; `--help` would go green again the next time the SDK moves,
+   so the check now speaks MCP.
+
+4. **`sill.py` never read `backend/.env`.** A beat's bare `sill notice` found
+   the right database and the same command from the operator's shell did not,
+   and the rehearsal could not say why. The route was `worker.py`'s
+   module-level `load_dotenv()` — which resolves `.env` against worker.py's
+   own directory, not the cwd — leaking `backend/.env` into the worker's
+   environment, which `beat_worker.spawn_beat()` forwards wholesale to the
+   child. The mint path now loads that file itself, so it no longer depends
+   on an unrelated module having been imported first.
+
+None of these tests needs docker, a database, or a network.
 """
 
 import json
 import os
+import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
 VERIFY_SH = REPO_ROOT / "verify.sh"
 UPGRADE_SH = REPO_ROOT / "upgrade.sh"
 INSTALL_SH = REPO_ROOT / "install.sh"
@@ -181,3 +201,227 @@ def test_the_fallback_merge_produces_a_stdio_entry_claude_code_understands():
     entry = block.split("servers[\"sill\"] = ", 1)[1].split("\n", 1)[0]
     parsed = json.loads(entry)
     assert parsed == {"type": "stdio", "command": "sill-mcp", "args": [], "env": {}}
+
+
+# --- verify.sh check 2: a real MCP handshake -----------------------------------
+#
+# Each stub below is a whole MCP "server" — a script that either speaks the
+# protocol or fails in one of the specific ways a real server has failed. They
+# are the point of these tests: the old check could not tell any of them apart
+# from a healthy server, because none of them is reached by `--help`.
+
+GOOD_SERVER = """\
+import json, sys
+line = sys.stdin.readline()
+req = json.loads(line)
+sys.stdout.write(json.dumps({
+    "jsonrpc": "2.0", "id": req["id"],
+    "result": {
+        "protocolVersion": "2024-11-05",
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": "sill", "version": "0.2.0"},
+    },
+}) + "\\n")
+sys.stdout.flush()
+sys.stdin.readline()
+"""
+
+# The real F4 failure, verbatim: the server starts, accepts stdin, and dies
+# on the SDK call. `sill-mcp --help` exits 0 on exactly this build.
+DEAD_SERVER = """\
+import sys
+sys.stderr.write("'Server' object has no attribute 'list_tools'\\n")
+sys.exit(1)
+"""
+
+# The shape of the old check's false green: exit 0, having answered nothing.
+SILENT_SERVER = "import sys\nsys.exit(0)\n"
+
+HANGING_SERVER = """\
+import sys, time
+sys.stdin.readline()
+time.sleep(300)
+"""
+
+WRONG_SERVER = """\
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({
+    "jsonrpc": "2.0", "id": req["id"],
+    "result": {"protocolVersion": "2024-11-05", "capabilities": {},
+               "serverInfo": {"name": "someone-elses-server", "version": "9"}},
+}) + "\\n")
+sys.stdout.flush()
+"""
+
+ERRORING_SERVER = """\
+import json, sys
+req = json.loads(sys.stdin.readline())
+sys.stdout.write(json.dumps({
+    "jsonrpc": "2.0", "id": req["id"],
+    "error": {"code": -32603, "message": "database is not accepting connections"},
+}) + "\\n")
+sys.stdout.flush()
+"""
+
+
+def make_stub(tmp_path: Path, name: str, body: str) -> Path:
+    stub = tmp_path / name
+    stub.write_text(f"#!{sys.executable}\n{body}")
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return stub
+
+
+def run_handshake(stub: Path, timeout_s: str = "10") -> subprocess.CompletedProcess:
+    """Run verify.sh's own mcp_handshake() against one stub server."""
+    program = "\n".join([
+        "set -uo pipefail",
+        extract_function(VERIFY_SH, "mcp_handshake"),
+        "mcp_handshake",
+    ])
+    env = {**os.environ, "SILL_MCP_CMD": str(stub),
+           "SILL_VERIFY_MCP_TIMEOUT_S": timeout_s}
+    return subprocess.run(["bash", "-c", program], capture_output=True,
+                          text=True, env=env, timeout=90)
+
+
+def test_handshake_passes_a_server_that_speaks_mcp(tmp_path):
+    result = run_handshake(make_stub(tmp_path, "good", GOOD_SERVER))
+    assert result.returncode == 0, result.stderr
+    assert "sill 0.2.0" in result.stdout
+    assert "2024-11-05" in result.stdout
+
+
+def test_handshake_fails_the_server_that_used_to_pass_dead(tmp_path):
+    """F4 itself. This is the case the whole change exists for: `--help` exits
+    0 on this build, and the old check called that a pass."""
+    result = run_handshake(make_stub(tmp_path, "dead", DEAD_SERVER))
+    assert result.returncode != 0
+    assert "without answering" in result.stderr
+    assert "list_tools" in result.stderr, (
+        "the server's own error must reach the operator — it is the entire "
+        f"diagnosis: {result.stderr}"
+    )
+
+
+def test_handshake_fails_a_server_that_exits_0_saying_nothing(tmp_path):
+    """The `--help` shape, generalised: exit 0 is not an answer."""
+    result = run_handshake(make_stub(tmp_path, "silent", SILENT_SERVER))
+    assert result.returncode != 0
+    assert "without answering" in result.stderr
+
+
+def test_handshake_fails_a_hanging_server_within_its_budget(tmp_path):
+    """A check that hangs is a check nobody runs twice."""
+    result = run_handshake(make_stub(tmp_path, "hang", HANGING_SERVER),
+                           timeout_s="3")
+    assert result.returncode != 0
+    assert "no answer to `initialize`" in result.stderr
+
+
+def test_handshake_fails_a_server_that_is_not_this_one(tmp_path):
+    """`claude mcp add` registers the name `sill`; a handshake answered by
+    something else means the registration points somewhere unintended."""
+    result = run_handshake(make_stub(tmp_path, "wrong", WRONG_SERVER))
+    assert result.returncode != 0
+    assert "someone-elses-server" in result.stderr
+
+
+def test_handshake_fails_a_server_that_returns_a_jsonrpc_error(tmp_path):
+    result = run_handshake(make_stub(tmp_path, "erroring", ERRORING_SERVER))
+    assert result.returncode != 0
+    assert "refused `initialize`" in result.stderr
+    assert "not accepting connections" in result.stderr
+
+
+def test_check_2_no_longer_rests_on_help(tmp_path):
+    """Ordering and wiring, not just presence: check 2 must actually call the
+    handshake, and must not be satisfiable by `--help` any more."""
+    text = VERIFY_SH.read_text(encoding="utf-8")
+    code = [ln for ln in text.splitlines() if not ln.lstrip().startswith("#")]
+    assert not any("sill-mcp --help" in ln for ln in code), (
+        "verify.sh still leans on `sill-mcp --help`, which exits before the "
+        "MCP SDK is imported"
+    )
+    assert "if handshake=\"$(mcp_handshake)\"; then" in text
+    assert text.index("mcp_handshake() {") < text.index('$(mcp_handshake)'), (
+        "check 2 calls mcp_handshake before it is defined"
+    )
+
+
+# --- the mint path reads backend/.env -----------------------------------------
+
+
+def run_mint_path_in(tmp_path: Path, env_body: str | None, preset: dict) -> dict:
+    """Import a copy of the real sill.py beside a fixture .env and report the
+    database coordinates it resolved.
+
+    A copy, not the installed module: sill.py finds `.env` next to its own
+    file, so pointing it at a fixture means putting the file there. It imports
+    nothing but the standard library, so a copy is the real thing.
+    """
+    (tmp_path / "sill.py").write_bytes((BACKEND_ROOT / "sill.py").read_bytes())
+    if env_body is not None:
+        (tmp_path / ".env").write_text(env_body, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("SILL_DB_", "POSTGRES_"))}
+    env["PYTHONPATH"] = str(tmp_path)
+    env.update(preset)
+    result = subprocess.run(
+        [sys.executable, "-c",
+         "import sill, json; print(json.dumps({'container': sill.DB_CONTAINER, "
+         "'user': sill.DB_USER, 'name': sill.DB_NAME}))"],
+        capture_output=True, text=True, env=env, cwd=str(tmp_path.parent),
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+MINT_ENV = """\
+# side-by-side install
+SILL_DB_CONTAINER=other_db
+SILL_DB_USER=other_user
+SILL_DB_NAME="other_name"
+"""
+
+
+def test_the_mint_path_reads_backend_env(tmp_path):
+    """The observed asymmetry, removed: a bare `sill notice` from the
+    operator's shell now resolves the same container a beat's does."""
+    out = run_mint_path_in(tmp_path, MINT_ENV, preset={})
+    assert out == {"container": "other_db", "user": "other_user",
+                   "name": "other_name"}, "quotes should be stripped, too"
+
+
+def test_an_exported_variable_still_beats_the_env_file_for_the_mint_path(tmp_path):
+    out = run_mint_path_in(tmp_path, MINT_ENV,
+                           preset={"SILL_DB_CONTAINER": "from_shell"})
+    assert out["container"] == "from_shell"
+    assert out["user"] == "other_user", "unset keys still come from .env"
+
+
+def test_the_mint_path_falls_back_to_defaults_with_no_env_file(tmp_path):
+    """The single-stack install has no backend/.env at all, and must not
+    become an error case."""
+    out = run_mint_path_in(tmp_path, None, preset={})
+    assert out == {"container": "sill_db", "user": "sill", "name": "sill"}
+
+
+def test_the_mint_path_loads_the_env_file_before_resolving_coordinates():
+    """Ordering: a `DB_CONTAINER = …` above the loader call would read the
+    pre-.env environment and the fix would be inert."""
+    text = (BACKEND_ROOT / "sill.py").read_text(encoding="utf-8")
+    assert text.index("\n_load_backend_env()\n") < text.index("\nDB_CONTAINER = "), (
+        "sill.py resolves DB_CONTAINER before it loads backend/.env"
+    )
+
+
+def test_the_mint_path_does_not_depend_on_the_worker_being_imported():
+    """Before the fix, the only thing putting `backend/.env` into a beat's
+    environment was `worker.py`'s module-level `load_dotenv()` plus
+    `spawn_beat()`'s wholesale env forward. `python -m beat_worker` imports
+    neither, so a worker started that way minted against the defaults."""
+    text = (BACKEND_ROOT / "sill.py").read_text(encoding="utf-8")
+    assert "_load_backend_env" in text
+    assert "import worker" not in text and "from worker" not in text

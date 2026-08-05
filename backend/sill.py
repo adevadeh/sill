@@ -22,6 +22,53 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+
+def _load_backend_env() -> None:
+    """Read `backend/.env` into the process environment, with Compose's
+    precedence: an already-exported shell variable wins, the file fills in the
+    rest. Mirrors `load_env_file` in verify.sh/upgrade.sh and `load_env` in
+    memory_health.py.
+
+    Why the mint path needs this. These three variables used to come from the
+    process environment only, and nothing put them there. Inside a beat they
+    were nonetheless right, by a route nobody had traced: `sill-worker`
+    imports `worker.py`, whose module-level `load_dotenv()` resolves `.env`
+    against **worker.py's own directory** rather than the cwd, so `backend/.env`
+    ended up in the worker's environment, and `beat_worker.spawn_beat()` hands
+    the child `{**os.environ, …}` wholesale. From the operator's own shell, in
+    the same directory, the same bare `sill notice` fell back to `sill_db` and
+    failed — reproduced twice during the v0.2.0 acceptance rehearsal, which
+    recorded the mechanism as undetermined (docs/RELEASE-REHEARSAL.md §4).
+
+    Two things were wrong with that. The mint path's database coordinates
+    should not arrive as an unrelated module's import side effect: a worker
+    started as `python -m beat_worker` never imports `worker`, and would mint
+    against the defaults — which, on a machine with a second Sill, is another
+    install's container. And the asymmetry is itself a trap: a command that
+    works inside a beat and fails from the shell that launched it is exactly
+    the surprise this file's error reporting exists to prevent.
+    """
+    env_path = Path(__file__).resolve().parent / ".env"
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return          # no .env is the normal single-stack case, not an error
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_backend_env()
+
 DB_CONTAINER = os.environ.get("SILL_DB_CONTAINER", "sill_db")
 DB_USER = os.environ.get("SILL_DB_USER", "sill")
 DB_NAME = os.environ.get("SILL_DB_NAME", "sill")
