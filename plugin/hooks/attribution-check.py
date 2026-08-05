@@ -16,7 +16,16 @@ classes:
 
 Non-blocking. Emits systemMessage for the operator's TUI and logs every fire
 to /tmp/attribution-check.log.
+
+The Bash/sill.py-notice branch of extract_content() fires on both harnesses
+via _harness.tool_kind/shell_command: Claude's Bash and Codex's exec/
+exec_command both normalize to "shell" kind (see _harness.py). The MCP
+branches (remember/remember_batch) already worked on both harnesses before
+this — hook payloads flatten an MCP tool name to "mcp__server__tool" on
+both Claude Code and Codex, and is_tool_name() matches by suffix. Fails
+open — exits 0, no output — if _harness itself cannot be imported.
 """
+import importlib.util
 import json
 import os
 import re
@@ -34,6 +43,20 @@ SESSIONS_DIR = Path(
 )
 NUMBERING_MD = SESSIONS_DIR / "NUMBERING.md"
 LOG_FILE = Path(os.environ.get("SILL_LOG_DIR", "/tmp")) / "attribution-check.log"
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
 
 BEAT_RE = re.compile(r"\bbeat[s]?\s*(\d{1,3})\b", re.IGNORECASE)
 
@@ -135,9 +158,9 @@ def extract_content(data: dict) -> str | None:
             return "\n\n---\n\n".join(p for p in parts if p)
         return None
 
-    if tool_name == "Bash":
-        cmd = tool_input.get("command", "")
-        if not isinstance(cmd, str) or "sill.py notice" not in cmd:
+    if _harness.tool_kind(data) == "shell":
+        cmd = _harness.shell_command(data) or ""
+        if "sill.py notice" not in cmd:
             return None
         # Try double-quoted first, then single-quoted, then heredoc-ish fallback
         q = re.search(r"sill\.py\s+notice\s+\"([^\"]+)\"", cmd, re.DOTALL)
@@ -159,6 +182,8 @@ def extract_content(data: dict) -> str | None:
 
 
 def main() -> None:
+    if _harness is None:
+        sys.exit(0)
     try:
         data = json.load(sys.stdin)
     except json.JSONDecodeError:

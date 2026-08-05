@@ -11,7 +11,17 @@ This provides lexical-use telemetry, not a value verdict. Each accepted
 detection is recorded append-only (migration 006) with its detector
 version, evidence, session, and the memory's force/speaker; reuse_count
 remains a compatibility aggregate.
+
+Codex transcript records split an MCP call's name into namespace + name
+instead of leaving it flat (see get_recalled_memories below); joined via
+_harness.join_mcp_name so the reconstructed name carries the "__"
+separator a bare f"{namespace}{name}" concatenation dropped (that
+concatenation produced "mcp__sillrecall_batch" and only worked at all
+because the downstream filter used a substring test for "recall"/
+"hydrate"). Fails open — exits 0, no output — if _harness itself cannot
+be imported.
 """
+import importlib.util
 import json
 import os
 import sys
@@ -36,6 +46,20 @@ DB_PORT = os.environ.get("POSTGRES_PORT", "5432")
 DB_NAME = os.environ.get("POSTGRES_DB", "sill")
 DB_USER = os.environ.get("POSTGRES_USER", "sill")
 DB_PASS = os.environ.get("POSTGRES_PASSWORD", "sill_password")
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
 
 
 def log(message: str):
@@ -196,9 +220,7 @@ def get_recalled_memories(data: dict) -> list[dict]:
                 break
 
             if payload.get("type") == "function_call":
-                namespace = payload.get("namespace", "")
-                name = payload.get("name", "")
-                tool_uses[payload.get("call_id", "")] = f"{namespace}{name}"
+                tool_uses[payload.get("call_id", "")] = _harness.join_mcp_name(payload) or ""
             elif payload.get("type") == "function_call_output":
                 tool_results.append((payload.get("call_id", ""), payload.get("output", "")))
 
@@ -444,6 +466,8 @@ def read_recall_sidecars(session_id: str, recent_window_minutes: int = 5) -> lis
 
 
 def main():
+    if _harness is None:
+        sys.exit(0)
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:

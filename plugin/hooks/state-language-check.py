@@ -24,7 +24,18 @@ attribution-error pattern, hence the same hook shape.
 
 Non-blocking. Flags for verify-or-rephrase before storage. Logs to
 /tmp/state-language-check.log.
+
+Fires on both harnesses via _harness.tool_kind/shell_command/written_path/
+written_text: Claude's Bash normalizes with Codex's exec/exec_command to
+"shell" kind, and Claude's Write/Edit normalize with Codex's apply_patch to
+"write"/"edit" kind (apply_patch always "write", even a "*** Update File:"
+body — see _harness.py). The MCP branches (remember/remember_batch)
+already worked on both harnesses before this — hook payloads flatten an
+MCP tool name to "mcp__server__tool" on both Claude Code and Codex, and
+is_tool_name() matches by suffix. Fails open — exits 0, no output — if
+_harness itself cannot be imported.
 """
+import importlib.util
 import json
 import os
 import re
@@ -34,6 +45,20 @@ from pathlib import Path
 
 REPO = Path(os.environ.get("SILL_PROJECT_ROOT", os.getcwd()))
 LOG_FILE = Path(os.environ.get("SILL_LOG_DIR", "/tmp")) / "state-language-check.log"
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
 
 # Whole-word match patterns. Lowercased. Order doesn't matter.
 # Bias toward phrases that license disengagement or assert energy/clarity.
@@ -125,24 +150,6 @@ def is_tool_name(tool_name: str, *suffixes: str) -> bool:
     return any(normalized == suffix or normalized.endswith(f"__{suffix}") for suffix in suffixes)
 
 
-def extract_relevant_patch_additions(patch: str) -> str | None:
-    """Return added text from docs/ or journals/ files in an apply_patch payload."""
-    additions: list[str] = []
-    relevant = False
-
-    for line in patch.splitlines():
-        if line.startswith("*** Add File: ") or line.startswith("*** Update File: "):
-            relevant = is_relevant_path(line.split(": ", 1)[1].strip())
-            continue
-        if line.startswith("*** Delete File: ") or line.startswith("*** End of File"):
-            relevant = False
-            continue
-        if relevant and line.startswith("+"):
-            additions.append(line[1:])
-
-    return "\n".join(additions) if additions else None
-
-
 def extract_content(data: dict) -> str | None:
     """Pull text-to-scan from tool input, based on tool_name.
 
@@ -162,28 +169,21 @@ def extract_content(data: dict) -> str | None:
             return "\n\n---\n\n".join(p for p in parts if p)
         return None
 
-    if tool_name == "Write":
-        if not is_relevant_path(tool_input.get("file_path")):
+    kind = _harness.tool_kind(data)
+
+    if kind in ("write", "edit"):
+        # written_path/written_text already dispatch Write's file_path/content,
+        # Edit's (and MultiEdit's) new_string(s), and apply_patch's header-line
+        # path plus its "+" additions scoped to that same file (see
+        # _harness.py) — one branch for all three instead of a per-tool_name
+        # copy of the same scope-then-extract shape.
+        if not is_relevant_path(_harness.written_path(data)):
             return None
-        c = tool_input.get("content")
-        return c if isinstance(c, str) else None
+        return _harness.written_text(data)
 
-    if tool_name == "Edit":
-        if not is_relevant_path(tool_input.get("file_path")):
-            return None
-        # Only scan the new_string — it's what's being introduced
-        c = tool_input.get("new_string")
-        return c if isinstance(c, str) else None
-
-    if tool_name == "apply_patch":
-        c = tool_input.get("command")
-        if isinstance(c, str):
-            return extract_relevant_patch_additions(c)
-        return None
-
-    if tool_name == "Bash":
-        cmd = tool_input.get("command", "")
-        if not isinstance(cmd, str) or "sill.py notice" not in cmd:
+    if kind == "shell":
+        cmd = _harness.shell_command(data) or ""
+        if "sill.py notice" not in cmd:
             return None
         q = re.search(r"sill\.py\s+notice\s+\"([^\"]+)\"", cmd, re.DOTALL)
         if q:
@@ -203,6 +203,8 @@ def extract_content(data: dict) -> str | None:
 
 
 def main() -> None:
+    if _harness is None:
+        sys.exit(0)
     try:
         data = json.load(sys.stdin)
     except json.JSONDecodeError:

@@ -218,7 +218,9 @@ never blocked:
   matter for your own project.
 
 **When it fires:** `PreToolUse` matching
-`mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash`.
+`mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command`
+(`exec`/`exec_command` are Codex's shell tool names; see `_harness.py`
+for the full harness-normalization mapping).
 
 **Env vars:**
 
@@ -422,7 +424,9 @@ hook is non-blocking; it just asks "do you have the state you're
 describing, or are you matching human convention?"
 
 **When it fires:** `PreToolUse` matching
-`mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|apply_patch|Edit|Write`.
+`mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|apply_patch|Edit|Write`
+(`exec`/`exec_command`/`apply_patch` are Codex's shell/write tool names;
+see `_harness.py` for the full harness-normalization mapping).
 
 **Env vars:** `SILL_PROJECT_ROOT` (default `cwd`), `SILL_LOG_DIR`
 (default `/tmp`), `SILL_BEAT_JOURNAL_DIRS` (default unset — see scope
@@ -455,16 +459,17 @@ or `additionalContext`. (The other two, `stored-slot-guard` and
 `tool-type-witness` below, guard mint receipts instead of shell
 commands.)
 
-**When it fires:** `PreToolUse` matching `Bash`. Timeout: 10s. This
+**When it fires:** `PreToolUse` matching `Bash|exec|exec_command`
+(Claude's `Bash` plus Codex's two shell tool names). Timeout: 10s. This
 matcher is independent of `attribution-check`'s and
 `state-language-check`'s own `Bash`-inclusive matchers — all three
-fire on a Bash call. That's expected: see `docs/extending.md`'s
+fire on the same shell call. That's expected: see `docs/extending.md`'s
 "Avoiding matcher conflicts".
 
 **Env vars:** none.
 
-**How to disable:** remove the `PreToolUse` entry (matcher `Bash`)
-whose command is `shell-idiom-guard.py`.
+**How to disable:** remove the `PreToolUse` entry (matcher
+`Bash|exec|exec_command`) whose command is `shell-idiom-guard.py`.
 
 **Canned test:**
 
@@ -494,7 +499,8 @@ blockquoted mention of a fake id is treated as specimen material, not
 a claim, and also passes — only a bare, unquoted receipt line naming
 an id absent from the store is denied.
 
-**When it fires:** `PreToolUse` matching `Write|Edit`. Timeout: 10s.
+**When it fires:** `PreToolUse` matching `Write|Edit|apply_patch`
+(`apply_patch` is Codex's write/edit tool — see `_harness.py`). Timeout: 10s.
 
 **Env vars:**
 
@@ -521,7 +527,7 @@ also passes this specific guard; `tool-type-witness` below and any
 downstream record checks cover that side.
 
 **How to disable:** remove the `PreToolUse` entry (matcher
-`Write|Edit`) whose command is `stored-slot-guard.py`.
+`Write|Edit|apply_patch`) whose command is `stored-slot-guard.py`.
 
 **Canned test** (a receipt-shaped id the store has never seen; a fake
 `docker` on `PATH` makes every lookup deterministically report "no
@@ -555,10 +561,13 @@ same phrases pass through untouched, since those are citations of the
 pattern, not instances of it; an honest report of that history can
 only be written from inside an `Edit`, which this hook doesn't match.
 
-**When it fires:** `PreToolUse` matching `Write` only. Timeout: 10s.
-Registered on `Write` only by design — an `Edit`-delivered version of
-this same text is not a contradiction, so checking `Edit` would only
-cost a wasted interpreter start on every edit.
+**When it fires:** `PreToolUse` matching `Write|apply_patch` — Claude's
+`Write` and Codex's `apply_patch` (both normalize to "write" kind via
+`_harness.py`; `apply_patch` is always "write", never "edit", even for a
+`*** Update File:` body). Timeout: 10s. Registered on write-kind calls
+only by design — an `Edit`-delivered version of this same text is not a
+contradiction, so checking `Edit` would only cost a wasted interpreter
+start on every edit.
 
 **Env vars:**
 
@@ -566,8 +575,8 @@ cost a wasted interpreter start on every edit.
   derivation by the beat worker, as `stored-slot-guard` above. Fails
   open on any parse error.
 
-**How to disable:** remove the `PreToolUse` entry (matcher `Write`)
-whose command is `tool-type-witness.py`.
+**How to disable:** remove the `PreToolUse` entry (matcher
+`Write|apply_patch`) whose command is `tool-type-witness.py`.
 
 **Canned test:**
 

@@ -92,7 +92,9 @@ order). The composition rules:
 
 **Avoiding matcher conflicts.** Sill's `PreToolUse` matchers
 target memory-storage tools and (for state-language-check)
-`Bash|apply_patch|Edit|Write`. If your hook uses a narrower or
+`Bash|exec|exec_command|apply_patch|Edit|Write` — the union of Claude's
+and Codex's tool names for the same shell/write/edit actions (see
+`_harness.py`). If your hook uses a narrower or
 unrelated matcher, there's no conflict. If you want to gate one
 of Sill's hooks off for a specific tool, the cleanest path is
 to copy the relevant entry, edit the matcher, and disable the

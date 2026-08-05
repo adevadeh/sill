@@ -7,20 +7,44 @@ with `=` right after `echo`, either substitutes a path in place of the
 word or silently eats the rest of a compound line when the word doesn't
 resolve. Both payloads corrupt the command without raising an error the
 operator is likely to notice.
+
+Fires on both harnesses via _harness.tool_kind/shell_command: Claude's
+Bash and Codex's exec/exec_command all normalize to "shell" (see
+_harness.py for the tool-name mapping). Fails open — exits 0, no
+output — if _harness itself cannot be imported, rather than crash or
+silently fall back to a Claude-only string match.
 """
+import importlib.util
 import json
 import re
 import sys
+from pathlib import Path
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
+if _harness is None:
+    sys.exit(0)
 
 try:
     data = json.load(sys.stdin)
 except json.JSONDecodeError:
     sys.exit(0)
 
-if data.get("tool_name") != "Bash":
+if _harness.tool_kind(data) != "shell":
     sys.exit(0)
 
-cmd = str((data.get("tool_input") or {}).get("command", ""))
+cmd = str(_harness.shell_command(data) or "")
 
 # Blank out quoted spans first: zsh does not =expand inside quotes, so
 # `echo '==='` is safe and so is a `===` buried in a quoted JSON/string

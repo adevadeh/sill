@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash",
+        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command",
         "hooks": [
           {
             "type": "command",
@@ -12,7 +12,7 @@
         ]
       },
       {
-        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|apply_patch|Edit|Write",
+        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|apply_patch|Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -22,7 +22,7 @@
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|exec|exec_command",
         "hooks": [
           {
             "type": "command",
@@ -33,7 +33,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit",
+        "matcher": "Write|Edit|apply_patch",
         "hooks": [
           {
             "type": "command",
@@ -44,7 +44,7 @@
         ]
       },
       {
-        "matcher": "Write",
+        "matcher": "Write|apply_patch",
         "hooks": [
           {
             "type": "command",

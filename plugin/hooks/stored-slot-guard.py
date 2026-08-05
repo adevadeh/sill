@@ -35,7 +35,13 @@ record checks cover that side.
 Fails OPEN when the store is unreachable — a down store must not block a
 journal write. Each id is checked independently, so one unreachable lookup
 skips only that id rather than abandoning the rest of the line's ids.
+
+Fires on both harnesses via _harness.tool_kind/written_path/written_text:
+Claude's Write/Edit and Codex's apply_patch all normalize to "write" or
+"edit" kind (see _harness.py). Also fails open — exits 0, no output — if
+_harness itself cannot be imported.
 """
+import importlib.util
 import json
 import os
 import re
@@ -82,7 +88,23 @@ def _in_scope(path: str) -> bool:
     return any(f in path for f in fragments)
 
 
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
+
+
 def main() -> None:
+    if _harness is None:
+        sys.exit(0)
     try:
         data = json.load(sys.stdin)
     except Exception:
@@ -91,13 +113,12 @@ def main() -> None:
     # on every path, so this is a scope check, not an exception handler.
     if not isinstance(data, dict):
         sys.exit(0)
-    if data.get("tool_name") not in ("Write", "Edit"):
+    if _harness.tool_kind(data) not in ("write", "edit"):
         sys.exit(0)
-    tool_input = data.get("tool_input") or {}
-    path = tool_input.get("file_path") or ""
+    path = _harness.written_path(data) or ""
     if not _in_scope(path):
         sys.exit(0)
-    text = tool_input.get("content") or tool_input.get("new_string") or ""
+    text = _harness.written_text(data) or ""
     if "stored" not in text.lower():
         sys.exit(0)
 

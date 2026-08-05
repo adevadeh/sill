@@ -22,17 +22,39 @@ the beat worker pays nothing for this check. Fails open on any parse
 error. Registered on Write only — an Edit-delivered version of this text
 is not a contradiction, so checking Edit would only cost a wasted
 interpreter start on every edit.
+
+Fires on both harnesses via _harness.tool_kind/written_path/written_text:
+Claude's Write and Codex's apply_patch both normalize to "write" kind
+(apply_patch always — even a "*** Update File:" body — never "edit"; see
+_harness.py). Fails open — exits 0, no output — if _harness itself
+cannot be imported.
 """
+import importlib.util
 import json
 import os
 import re
 import sys
+from pathlib import Path
 
 PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
     r"arrived\s+by\s+Edit",
     r"held\s+the\s+literal\s+placeholder",
     r"initial\s+Write\s+ended\s+at",
 )]
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
 
 
 def quoted_at(line: str, pos: int) -> bool:
@@ -56,6 +78,8 @@ def _in_scope(path: str) -> bool:
 
 
 def main() -> None:
+    if _harness is None:
+        sys.exit(0)
     try:
         data = json.load(sys.stdin)
     except Exception:
@@ -64,13 +88,12 @@ def main() -> None:
     # on every path, so this is a scope check, not an exception handler.
     if not isinstance(data, dict):
         sys.exit(0)
-    if data.get("tool_name") != "Write":
+    if _harness.tool_kind(data) != "write":
         sys.exit(0)  # an Edit-delivered version of this text is not a contradiction
-    tool_input = data.get("tool_input") or {}
-    path = tool_input.get("file_path") or ""
+    path = _harness.written_path(data) or ""
     if not _in_scope(path):
         sys.exit(0)
-    text = tool_input.get("content") or ""
+    text = _harness.written_text(data) or ""
 
     hits = []
     for line in text.splitlines():
