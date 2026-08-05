@@ -401,6 +401,13 @@ comes up.
 
 ## Scheduling
 
+**Choosing the interval happens earlier, not here.**
+`docs/onboarding/05-christening.md` is where a human picks the number —
+the arithmetic (beats per day, per week, per voice) is laid out there so
+they choose it with the cost in front of them, and only after supervised
+beats have already produced real output. This section only covers
+installing whatever cadence they chose.
+
 Nothing installs a schedule automatically — `install.sh` never touches
 launchd or systemd. `scheduling/` has a macOS LaunchAgent template and a
 Linux systemd `--user` unit template, plus a README covering the

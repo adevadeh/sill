@@ -53,6 +53,22 @@ current, adapter conformance (the four-slot contract — see
 Restart Claude Code (and/or Codex) so the new MCP server entry is picked
 up.
 
+## After installing
+
+`./install.sh` and `./verify.sh` get you working software. Turning that
+into somebody's — a charter in their own words, a name, a first
+deliberate memory minted with a receipt they watch arrive, and a cadence
+they choose with the arithmetic in front of them — is a separate, phased
+runbook:
+
+```
+docs/onboarding/README.md
+```
+
+Walk it with the person present. Everything before its last two phases is
+reversible, and stopping partway leaves a working install rather than a
+half-built one. It deliberately does not tell you what your Sill is for.
+
 ## Supported hosts
 
 Sill's plugin (hooks + MCP server) is built and tested against two agent

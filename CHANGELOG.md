@@ -110,6 +110,32 @@ All notable changes to Sill are recorded here. Format loosely follows
   hook wiring independently of any database step (`--hooks-only` skips
   docker/db entirely); a stale `.codex/hooks.json` always shows its diff
   and is left untouched unless `--force-hooks` is also passed.
+- **Identity card** — `sill identity show|init|set` writing
+  `$SILL_STATE_DIR/identity.json` (default `$XDG_STATE_HOME/sill/identity.json`,
+  else `~/.local/state/sill/identity.json` — never `/tmp`); `name: null` is
+  an explicit *not yet christened* value rather than an absence; also
+  records `charter_path`, `born_at`, `engine`, `scope`, `harnesses`,
+  `christened_at`. A missing or corrupt identity file degrades to a plain
+  report, never a traceback. `docs/identity.md`.
+- **Consent-scoped episodic backfill** — `sill backfill plan|run`: `plan`
+  always prints exactly what would be read (harnesses, projects, date
+  range, file counts) and writes nothing; `run` refuses without an
+  explicit confirmation flag, naming it. Reuses the harness detection
+  from the adapter work rather than re-deriving transcript shapes.
+  `docs/onboarding/02-backfill.md`.
+- **Onboarding runbook and christening** — `docs/onboarding/` (a phased
+  runbook: install → harness adapters → identity card → permissions
+  verified → consent-scoped backfill → supervised first beats →
+  seeded-fault drill → christening → schedule) and `onboarding/`
+  (`charter-prompts.md`; `to-the-one-who-wakes-here.md`, the
+  christening-register letter, scheduled for re-reading at the first live
+  guard refusal and the first tending review). Permissions are verified
+  before any beat runs — a denied headless run exits 0 having done
+  nothing — and the schedule installs last, only after supervised beats
+  have demonstrably produced output. The christening captures a charter
+  verbatim with a timestamp, in the human's own words, opens by saying
+  plainly that the person can point their Sill at anything, and
+  deliberately never says what a Sill is for.
 
 ### Fixed
 
@@ -143,6 +169,10 @@ All notable changes to Sill are recorded here. Format loosely follows
   content in later files passed guards unexamined.
 - `upgrade.sh` had no Codex path, so upgraded installs silently kept the
   old hook set on that harness.
+- Two more v0.1.0-era env var names that survived every prior sweep:
+  `sill_mcp_server.py`'s `--dsn` default read `AGI_DB_DSN` (now
+  `SILL_DB_DSN`); `worker.py`'s `--mode` default read `AGI_WORKER_MODE`
+  (now `SILL_WORKER_MODE`).
 
 ### Changed
 

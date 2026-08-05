@@ -490,6 +490,11 @@ step_banner() {
   cat <<'EOF'
     Sill is installed.
 
+    Next: turn this working install into somebody's Sill.
+      Read docs/onboarding/README.md — a phased runbook, walked with the
+      person present, ending at a christening: a charter in their own
+      words, a name, a first deliberate memory, a chosen cadence.
+
     Optional follow-ups:
       * Install the episodic-memory marketplace plugin in Claude Code for richer recall.
       * Restart Claude Code (and/or codex) so the new MCP server is picked up.
