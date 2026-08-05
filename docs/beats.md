@@ -150,29 +150,29 @@ Expected output starts with a startup banner naming every voice and the
 derived guard scope, for example:
 
 ```
-2026-08-04 16:01:12,098 - beat_worker - INFO - Starting beat worker
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Project root: /path/to/your/project
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Config: /path/to/your/project/beats.json
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Interval: 1s (0.0h)
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Beat timeout: 1800s
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Rotation state: ~/.local/state/sill/beat-rotation.json
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Voice [analyst]: prompt=prompts/analyst.md, transcripts=logs/analyst
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Voice [reflector]: prompt=prompts/reflector.md, transcripts=logs/reflector
-2026-08-04 16:01:12,098 - beat_worker - INFO -   Guard scope (SILL_BEAT_JOURNAL_DIRS for each child): 'notes/:logs/analyst/:journal/:logs/reflector/'
+2026-08-04 16:01:12,098 - INFO - Starting beat worker
+2026-08-04 16:01:12,098 - INFO -   Project root: /path/to/your/project
+2026-08-04 16:01:12,098 - INFO -   Config: /path/to/your/project/beats.json
+2026-08-04 16:01:12,098 - INFO -   Interval: 1s (0.0h)
+2026-08-04 16:01:12,098 - INFO -   Beat timeout: 1800s
+2026-08-04 16:01:12,098 - INFO -   Rotation state: ~/.local/state/sill/beat-rotation.json
+2026-08-04 16:01:12,098 - INFO -   Voice [analyst]: prompt=prompts/analyst.md, transcripts=logs/analyst
+2026-08-04 16:01:12,098 - INFO -   Voice [reflector]: prompt=prompts/reflector.md, transcripts=logs/reflector
+2026-08-04 16:01:12,098 - INFO -   Guard scope (SILL_BEAT_JOURNAL_DIRS for each child): 'notes/:logs/analyst/:journal/:logs/reflector/'
 ```
 
 then, a few seconds to a few minutes later, one line telling you whether
 the first beat was a **verified success**:
 
 ```
-2026-08-04 16:01:12,319 - beat_worker - INFO - [analyst] Beat complete in 0.2s — transcript 20260804-160112.txt
+2026-08-04 16:01:12,319 - INFO - [analyst] Beat complete in 0.2s — transcript 20260804-160112.txt
 ```
 
 or the **silent-failure warning** the Permissions section below exists to
 prevent — read that section immediately if you see this:
 
 ```
-2026-08-04 16:00:50,600 - beat_worker - WARNING - [analyst] Beat exited 0 in 0.3s but produced no file matching 'notes/analyst-*.md' — the agent CLI may be denying tools non-interactively; see docs/beats.md permissions. Rotation remains on [analyst].
+2026-08-04 16:00:50,600 - WARNING - [analyst] Beat exited 0 in 0.3s but produced no file matching 'notes/analyst-*.md' — the agent CLI may be denying tools non-interactively; see docs/beats.md permissions. Rotation remains on [analyst].
 ```
 
 No `beats.json` at all fails loudly (a Python traceback naming the missing
