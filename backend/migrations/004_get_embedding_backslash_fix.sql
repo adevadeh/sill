@@ -1,6 +1,14 @@
 -- 004_get_embedding_backslash_fix.sql
 -- Ported from agi-memory migration 023 (2026-07-09). Body verbatim.
 --
+-- This bug was diagnosed and fixed first by an external contributor in PR #2
+-- (2026-06-09, one week after the v0.1.0 install went out) — schema.sql plus
+-- his own migrations/016_fix_get_embedding_backslash.sql. This project found
+-- the same bug independently a month later; this migration applies the same
+-- fix to existing installs (PR #2's schema.sql hunk was absorbed separately
+-- to fix the baseline for fresh installs, since this migration alone left
+-- schema.sql itself still wrong).
+--
 -- Bug: `text_content::bytea` INTERPRETS backslash escapes, so any memory
 -- whose content contains a literal backslash (a regex, a Windows path, an
 -- escaped quote) raised `invalid input syntax for type bytea` inside
