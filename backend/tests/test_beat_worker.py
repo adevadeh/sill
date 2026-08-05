@@ -221,6 +221,62 @@ def test_spawn_beat_exports_journal_dirs_derived_from_full_voice_config(tmp_path
     assert captured_env.get("SILL_DETACHED_BEAT") == "1"
 
 
+def test_spawn_beat_returns_false_when_exit_0_produces_no_output_file(tmp_path, monkeypatch):
+    """The output-verification guard's whole point (beat_worker.py's
+    produced_output() check inside spawn_beat, ~lines 536-543): a headless
+    agent CLI with no tool permissions gets every tool call auto-denied,
+    still exits 0, and has done nothing. Unlike
+    test_spawn_beat_exports_journal_dirs_derived_from_full_voice_config's
+    fake_run (which DOES write the output file, exercising the verified-
+    success path), this fake_run deliberately leaves the declared
+    output_glob untouched — the exact silent-failure shape docs/beats.md's
+    Permissions section describes — so this exercises spawn_beat()'s
+    silent-failure branch end-to-end rather than unit-testing
+    produced_output() in isolation (already covered by
+    test_produced_output_detects_a_new_file above)."""
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "analyst.md").write_text("Standing prompt.\n")
+    (tmp_path / "notes").mkdir()
+
+    voices = [
+        bw.Voice(name="analyst", prompt="prompts/analyst.md",
+                  transcripts="logs/analyst", output_glob="notes/analyst-*.md",
+                  kickoff="Begin."),
+        bw.Voice(name="reflector", prompt="prompts/reflector.md",
+                  transcripts="logs/reflector", output_glob="journal/reflector-*.md",
+                  kickoff="Begin."),
+    ]
+
+    def fake_run(cmd, **kwargs):
+        # Exit 0 with plausible-looking output, but — unlike the fixture
+        # above — no file written under notes/. This is exactly the shape
+        # of a tool-permission-denied headless run: the agent CLI notices
+        # the denial, gives up, and reports it in prose, having changed
+        # nothing.
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="I tried to write the note but the tool call was denied.", stderr="")
+
+    monkeypatch.setattr(bw.subprocess, "run", fake_run)
+
+    success, duration, transcript_path = bw.spawn_beat(voices[0], voices)
+
+    assert success is False, "exit 0 with no matching output file must not count as success"
+    # A transcript IS written on this path — spawn_beat reached and ran the
+    # subprocess; only the post-hoc output check failed it. That
+    # distinguishes this branch from the earlier prompt-read/spawn failures
+    # above, which return "" for transcript_path instead.
+    assert transcript_path != ""
+
+    # And the consequence that actually matters operationally: rotation
+    # must not advance on this "success", so the same voice retries next
+    # interval instead of the rotation silently moving on.
+    state_path = tmp_path / "state.json"
+    bw.write_state(state_path, 0)
+    bw.advance_if(state_path, index=0, n_voices=len(voices), success=success)
+    assert bw.read_state(state_path) == 0
+
+
 def test_spawn_beat_sets_no_journal_dirs_var_when_derivation_is_empty(tmp_path, monkeypatch):
     """A voice with neither a usable output_glob directory nor a transcripts
     value (degenerate, but not something spawn_beat should crash over) must

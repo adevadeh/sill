@@ -11,7 +11,9 @@
 # installed (pipx venv, or the ~/.local/share/sill-venv fallback);
 # {{SILL_DIR}} this repo's root (where beats.json and prompts/ live — NOT
 # backend/); {{SILL_LOG_DIR}} where stdout/stderr and the worker's own log
-# go.
+# go; {{SILL_BEAT_CLI}} the absolute path to the agent CLI executable,
+# resolved at install time (see SILL_BEAT_CLI below — a normal `claude`
+# install lives in ~/.local/bin, which is NOT in this unit's own PATH).
 #
 # This is a --user unit. Without `loginctl enable-linger <user>` run once
 # at install time, systemd stops user units the moment that user's last
@@ -28,6 +30,14 @@ WorkingDirectory={{SILL_DIR}}
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=SILL_PROJECT_ROOT={{SILL_DIR}}
 Environment=SILL_LOG_DIR={{SILL_LOG_DIR}}
+# Default SILL_BEAT_CLI is bare "claude", resolved against PATH — but a
+# normal install puts it in ~/.local/bin, which the fixed PATH above does
+# not include. Pinning the absolute path resolved at install time (see
+# scheduling/README.md) avoids relying on systemd's %h/$HOME handling,
+# which varies by version. A beat dies loudly at spawn with "No such file
+# or directory: 'claude'" if this ever goes stale (docs/beats.md and this
+# directory's README troubleshooting section).
+Environment=SILL_BEAT_CLI={{SILL_BEAT_CLI}}
 ExecStart={{SILL_PYTHON}} -m worker --mode beat
 StandardOutput=append:{{SILL_LOG_DIR}}/beat-worker-systemd-stdout.log
 StandardError=append:{{SILL_LOG_DIR}}/beat-worker-systemd-stderr.log

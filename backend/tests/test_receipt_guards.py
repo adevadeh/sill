@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 import sill
 
 HOOKS = Path(__file__).resolve().parents[2] / "plugin" / "hooks"
@@ -143,6 +145,53 @@ def test_lowercase_receipt_with_trailing_backtick_reaches_the_store_check(tmp_pa
         "trailing backtick on this lowercase receipt line exempt it before "
         "reaching the per-id store-check code path"
     )
+
+
+def test_guard_denies_when_the_store_genuinely_lacks_the_id(tmp_path):
+    """The guard's actual point, never exercised by any test above: every
+    one of them runs against an absent/unreachable container, which is the
+    fail-OPEN path (test_store_unreachable_never_blocks) — a down store
+    must never block a write, so an unreachable lookup is skipped, not
+    treated as missing. This test is the other branch: the store answers
+    successfully (returncode 0) and truthfully reports zero matching rows,
+    so the guard must deny. Uses this file's own fake-docker technique (see
+    test_lowercase_receipt_reaches_the_store_check above), but the fake
+    behaves like a reachable store this time (`echo 0`, exit 0) instead of
+    an unreachable one (`exit 1`). This is docs/hooks.md's own canned test
+    for this hook (its stored-slot-guard section, 'Canned test')."""
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text("#!/bin/sh\necho 0\n")
+    fake_docker.chmod(0o755)
+
+    r = run("stored-slot-guard.py", {
+        "tool_name": "Write", "tool_input": {
+            "file_path": "journal/r-001.md",
+            "content": "Stored: deadbeef-1111-2222-3333-444455556666\n"}},
+        env_extra={"PATH": f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}"})
+
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    hook_out = out["hookSpecificOutput"]
+    assert hook_out["permissionDecision"] == "deny"
+    assert "deadbeef" in hook_out["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("hook", ["stored-slot-guard.py", "tool-type-witness.py"])
+@pytest.mark.parametrize("payload", ["[]", "null", '"just a string"', "42"])
+def test_guards_exit_zero_on_a_non_object_json_payload(hook, payload):
+    """Both guards call data.get(...) straight after json.load(sys.stdin)
+    without checking the payload is actually a JSON object first. A
+    non-object top-level payload — a bare list, null, string, or number —
+    is valid JSON that parses without error, so the bare `except Exception`
+    around json.load() does not catch it; unguarded, .get() on a list/None/
+    str/int raises AttributeError uncaught, exit 1. Every hook in this
+    suite is required to exit 0 on every path (see test_hook_safety.py's
+    module docstring for the class of bug this is)."""
+    r = subprocess.run([sys.executable, str(HOOKS / hook)],
+                       input=payload, capture_output=True, text=True,
+                       env={**os.environ, "SILL_BEAT_JOURNAL_DIRS": "journal/"},
+                       timeout=15)
+    assert r.returncode == 0, f"{hook} on payload {payload!r}: {r.stderr}"
 
 
 def test_witness_denies_unquoted_carrying_act_claim():

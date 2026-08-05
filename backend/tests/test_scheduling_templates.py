@@ -19,6 +19,7 @@ TOKENS = {
     "{{SILL_PYTHON}}": "/opt/example/sill-venv/bin/python",
     "{{SILL_DIR}}": "/opt/example/sill",
     "{{SILL_LOG_DIR}}": "/opt/example/sill/logs",
+    "{{SILL_BEAT_CLI}}": "/opt/example/.local/bin/claude",
 }
 
 
@@ -65,6 +66,19 @@ def test_plist_program_arguments_invoke_the_beat_mode():
     assert "--mode" in args and "beat" in args
 
 
+def test_plist_pins_sill_beat_cli_to_an_absolute_path():
+    """The default SILL_BEAT_CLI ('claude', resolved against PATH) isn't
+    found under this plist's own fixed, minimal PATH — a normal install
+    puts it in ~/.local/bin, which is not in
+    /usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin. Pinning the resolved
+    absolute path as its own env var sidesteps needing PATH to find it at
+    scheduled-beat time at all."""
+    rendered = substitute(PLIST.read_text())
+    data = plistlib.loads(rendered.encode("utf-8"))
+    env = data.get("EnvironmentVariables", {})
+    assert env.get("SILL_BEAT_CLI") == TOKENS["{{SILL_BEAT_CLI}}"]
+
+
 def test_systemd_unit_carries_restart_and_restartsec():
     text = SYSTEMD_UNIT.read_text()
     assert any(line.strip().startswith("Restart=") for line in text.splitlines()), \
@@ -77,6 +91,17 @@ def test_systemd_unit_carries_an_explicit_path_environment_line():
     text = SYSTEMD_UNIT.read_text()
     assert any(line.strip().startswith("Environment=PATH=") for line in text.splitlines()), \
         "no Environment=PATH= — systemd units get a minimal default PATH, not the login shell's"
+
+
+def test_systemd_unit_pins_sill_beat_cli_to_an_absolute_path():
+    """Same reasoning as the plist counterpart above: bare 'claude' is not
+    on this unit's own fixed PATH (/usr/local/bin:/usr/bin:/bin), so the
+    resolved absolute path has to travel as its own Environment= line."""
+    rendered = substitute(SYSTEMD_UNIT.read_text())
+    lines = [l.strip() for l in rendered.splitlines()
+             if l.strip().startswith("Environment=SILL_BEAT_CLI=")]
+    assert len(lines) == 1
+    assert lines[0] == f"Environment=SILL_BEAT_CLI={TOKENS['{{SILL_BEAT_CLI}}']}"
 
 
 def test_systemd_unit_names_loginctl_enable_linger():

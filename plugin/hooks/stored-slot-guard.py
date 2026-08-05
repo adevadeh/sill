@@ -87,6 +87,10 @@ def main() -> None:
         data = json.load(sys.stdin)
     except Exception:
         sys.exit(0)
+    # A non-object payload (e.g. "[]") has no .get() — every hook exits 0
+    # on every path, so this is a scope check, not an exception handler.
+    if not isinstance(data, dict):
+        sys.exit(0)
     if data.get("tool_name") not in ("Write", "Edit"):
         sys.exit(0)
     tool_input = data.get("tool_input") or {}

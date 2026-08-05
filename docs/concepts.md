@@ -62,6 +62,10 @@ you can ignore them for normal recall.
 
 - `maintenance_config`, `config` — knobs.
 - `maintenance_state` — worker state machine.
+- `heartbeat_state` — a singleton row left over from the retired
+  heartbeat worker, but still live: `rabbit_bridge.py`'s inbox poll
+  stamps its `last_user_contact` column after ingesting each RabbitMQ
+  message. Nothing else in this codebase reads or writes it.
 - `external_calls`, `outbox_messages` — for the RabbitMQ message bus.
 
 The `maintenance_worker` runs by default and handles importance decay,

@@ -135,11 +135,14 @@ def load_voices(path: Path) -> list[Voice]:
 # Guard scope derivation — plugin/hooks/stored-slot-guard.py and
 # tool-type-witness.py are opt-in via SILL_BEAT_JOURNAL_DIRS (unset = no
 # scope = they check nothing), and state-language-check.py reads the same
-# variable as a beat-aware addition to its journals/+docs/ default. Nothing
-# in this codebase sets that variable except spawn_beat() below, computed
-# fresh from the voice config already loaded for this worker — so a beat's
-# own journal writes are guarded with zero operator configuration, and an
-# install that never defines voices never sets the variable at all.
+# variable too — but there it REPLACES, not adds to, its journals/+docs/
+# default: once this is set, only the derived voice directories are in
+# scope, so a beat child writing under journals/ or docs/ directly is no
+# longer state-language-checked. Nothing in this codebase sets that
+# variable except spawn_beat() below, computed fresh from the voice config
+# already loaded for this worker — so a beat's own journal writes are
+# guarded with zero operator configuration, and an install that never
+# defines voices never sets the variable at all.
 # ---------------------------------------------------------------------------
 
 def journal_dirs_for_voices(voices: list[Voice]) -> str:

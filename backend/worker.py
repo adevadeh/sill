@@ -15,8 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
-from datetime import datetime
 from typing import Any
 
 import asyncpg
@@ -145,15 +143,12 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="sill-worker", description="Run Sill background workers.")
     p.add_argument(
         "--mode",
-        choices=["maintenance", "research", "beat"],
+        choices=["maintenance", "beat"],
         default=os.getenv("AGI_WORKER_MODE", "maintenance"),
         help="Which worker to run.",
     )
     args = p.parse_args()
-    if args.mode == "research":
-        from research_worker import run_research_loop
-        asyncio.run(run_research_loop())
-    elif args.mode == "beat":
+    if args.mode == "beat":
         from beat_worker import run_beat_loop
         run_beat_loop()
     else:

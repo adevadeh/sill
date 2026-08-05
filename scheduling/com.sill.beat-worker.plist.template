@@ -14,7 +14,10 @@
   these): {{SILL_PYTHON}} the interpreter with the backend package installed
   (pipx venv, or the ~/.local/share/sill-venv fallback); {{SILL_DIR}} this
   repo's root (where beats.json and prompts/ live — NOT backend/);
-  {{SILL_LOG_DIR}} where stdout/stderr and the worker's own log go.
+  {{SILL_LOG_DIR}} where stdout/stderr and the worker's own log go;
+  {{SILL_BEAT_CLI}} the absolute path to the agent CLI executable (see
+  SILL_BEAT_CLI below — resolved at install time because a normal `claude`
+  install lives in ~/.local/bin, which is NOT on this plist's own PATH).
 
   RunAtLoad + KeepAlive means launchd retries forever on crash, spaced no
   closer than ThrottleInterval — there is no give-up state to clear, unlike
@@ -46,6 +49,17 @@
 		<string>{{SILL_DIR}}</string>
 		<key>SILL_LOG_DIR</key>
 		<string>{{SILL_LOG_DIR}}</string>
+		<!-- Default SILL_BEAT_CLI is bare "claude", resolved against PATH —
+		     but a normal install puts it in ~/.local/bin, which is not in
+		     the fixed PATH above (launchd does not expand $HOME in plist
+		     strings, so that directory can't just be appended here as
+		     text). Pinning the absolute path resolved at install time
+		     (see scheduling/README.md) sidesteps needing $HOME in PATH at
+		     all; a beat then dies loudly at spawn with "No such file or
+		     directory: 'claude'" if this ever goes stale, per
+		     docs/beats.md and this README's troubleshooting section. -->
+		<key>SILL_BEAT_CLI</key>
+		<string>{{SILL_BEAT_CLI}}</string>
 	</dict>
 
 	<!-- Start once when the agent is loaded, rather than waiting a full

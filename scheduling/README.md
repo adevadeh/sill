@@ -14,16 +14,34 @@ schedule itself can't tell you that; only watching one beat actually
 produce output can.
 
 Both templates use the same three tokens `install.sh` already uses
-elsewhere in this repo:
+elsewhere in this repo, plus one more this directory's templates add for
+the reason explained right after the table:
 
-| Token             | What it resolves to |
-|--------------------|---------------------|
-| `{{SILL_PYTHON}}`  | The interpreter that has the backend package installed — the pipx venv's `bin/python`, or `~/.local/share/sill-venv/bin/python` if you used the pip+venv fallback. |
-| `{{SILL_DIR}}`     | This repo's root — where `beats.json` and `prompts/` live once you've set them up (**not** `backend/`). |
-| `{{SILL_LOG_DIR}}` | Where stdout/stderr and the worker's own `beat-worker.log` should go. `/tmp` works, but survives reboots better somewhere under your home directory. |
+| Token               | What it resolves to |
+|----------------------|---------------------|
+| `{{SILL_PYTHON}}`    | The interpreter that has the backend package installed — the pipx venv's `bin/python`, or `~/.local/share/sill-venv/bin/python` if you used the pip+venv fallback. |
+| `{{SILL_DIR}}`       | This repo's root — where `beats.json` and `prompts/` live once you've set them up (**not** `backend/`). |
+| `{{SILL_LOG_DIR}}`   | Where stdout/stderr and the worker's own `beat-worker.log` should go. `/tmp` works, but survives reboots better somewhere under your home directory. |
+| `{{SILL_BEAT_CLI}}`  | The absolute path to the agent CLI executable (`claude`) that the worker spawns every beat. |
 
-Find your own values for the first two the same way `install.sh` resolves
-them:
+**Why `{{SILL_BEAT_CLI}}` has to be an absolute path.** The worker's
+default (`SILL_BEAT_CLI` unset) is the bare command name `claude`,
+resolved against `PATH` — fine interactively, because your shell's `PATH`
+almost certainly includes wherever `claude` actually lives. Both templates
+in this directory set a fixed, minimal `PATH` instead
+(`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` for the plist,
+`/usr/local/bin:/usr/bin:/bin` for the systemd unit), and a normal `claude`
+install lives in `~/.local/bin` — outside both. Left unresolved, every
+scheduled beat dies at spawn with `[Errno 2] No such file or directory:
+'claude'` (rotation correctly holds when this happens, so it fails safe —
+but it never beats; see this doc's troubleshooting section below).
+Resolving `claude` to an absolute path once, at install time, sidesteps
+needing `~/.local/bin` on the scheduler's `PATH` at all — the same
+resolve-once-at-substitution strategy `{{SILL_PYTHON}}` already uses below,
+for the identical reason (a scheduler's minimal `PATH` doesn't match your
+interactive shell's).
+
+Find your own values for these the same way `install.sh` resolves them:
 
 ```bash
 # {{SILL_PYTHON}}: whichever of these exists, in order
@@ -33,6 +51,10 @@ ls "${PIPX_HOME:-$HOME/.local/pipx}/venvs/sill-memory/bin/python" 2>/dev/null \
 
 # {{SILL_DIR}}: wherever you cloned this repo
 cd /path/to/sill && pwd
+
+# {{SILL_BEAT_CLI}}: resolved against YOUR shell's PATH, not the
+# scheduler's — that's the whole point
+command -v claude
 ```
 
 ---
@@ -47,11 +69,13 @@ SILL_PYTHON="$(ls "${PIPX_HOME:-$HOME/.local/pipx}/venvs/sill-memory/bin/python"
   || ls "$HOME/.local/share/sill-venv/bin/python" 2>/dev/null \
   || command -v python3)"
 SILL_LOG_DIR="$HOME/.local/share/sill/logs"
+SILL_BEAT_CLI="$(command -v claude)"
 mkdir -p "$SILL_LOG_DIR"
 
 sed -e "s#{{SILL_PYTHON}}#$SILL_PYTHON#g" \
     -e "s#{{SILL_DIR}}#$PWD#g" \
     -e "s#{{SILL_LOG_DIR}}#$SILL_LOG_DIR#g" \
+    -e "s#{{SILL_BEAT_CLI}}#$SILL_BEAT_CLI#g" \
     scheduling/com.sill.beat-worker.plist.template \
     > ~/Library/LaunchAgents/com.sill.beat-worker.plist
 
@@ -97,11 +121,13 @@ SILL_PYTHON="$(ls "${PIPX_HOME:-$HOME/.local/pipx}/venvs/sill-memory/bin/python"
   || ls "$HOME/.local/share/sill-venv/bin/python" 2>/dev/null \
   || command -v python3)"
 SILL_LOG_DIR="$HOME/.local/share/sill/logs"
+SILL_BEAT_CLI="$(command -v claude)"
 mkdir -p "$SILL_LOG_DIR" ~/.config/systemd/user
 
 sed -e "s#{{SILL_PYTHON}}#$SILL_PYTHON#g" \
     -e "s#{{SILL_DIR}}#$PWD#g" \
     -e "s#{{SILL_LOG_DIR}}#$SILL_LOG_DIR#g" \
+    -e "s#{{SILL_BEAT_CLI}}#$SILL_BEAT_CLI#g" \
     scheduling/sill-beat-worker.service.template \
     > ~/.config/systemd/user/sill-beat-worker.service
 
@@ -202,3 +228,17 @@ A repeating `"[<voice>] Beat exited 0 in Ns but produced no file matching
 ..."` warning means the schedule is running but the tool-permission problem
 `docs/beats.md`'s Permissions section describes is still unresolved —
 scheduling was never the failure; run that section's by-hand check again.
+
+A repeating `"[<voice>] Beat attempt error after Ns: [Errno 2] No such
+file or directory: 'claude'."` line is a different failure entirely: the
+worker never even reached the agent CLI. It means `SILL_BEAT_CLI` (or the
+`{{SILL_BEAT_CLI}}` token substituted into the installed plist/unit) is
+either unset/bare `claude` or points at a path that no longer exists, and
+neither template's fixed, minimal `PATH` includes wherever `claude`
+actually lives (typically `~/.local/bin`) — see "Why `{{SILL_BEAT_CLI}}`
+has to be an absolute path" above. Rotation correctly holds on this
+failure (it fails safe), but no voice will ever beat until it's fixed. Fix
+by re-resolving `command -v claude` in your interactive shell and
+re-installing (edit-and-reload steps above), or by setting
+`SILL_BEAT_CLI` in the installed plist/unit to that absolute path by
+hand.

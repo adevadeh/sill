@@ -66,8 +66,11 @@ All notable changes to Sill are recorded here. Format loosely follows
   `beat_worker.spawn_beat()` now derives from the loaded voice config and
   exports to every beat child automatically — zero operator configuration,
   and zero cost to a non-beat install, which never sets the variable at
-  all. `state-language-check.py` reads the same variable as a beat-aware
-  addition to its existing `journals/`/`docs/` default.
+  all. `state-language-check.py` reads the same variable too, but there it
+  *replaces* rather than adds to its existing `journals/`/`docs/` default —
+  once a beat sets it, only the derived voice directories are in scope, so
+  a beat child writing under `journals/` or `docs/` directly is no longer
+  checked.
 - **Starter prompts** — `prompts/analyst.md` and `prompts/reflector.md`
   (the two shipped voices, craft without house-specific citations) and a
   shared `prompts/_receipt-gate.md` fragment both voices include by

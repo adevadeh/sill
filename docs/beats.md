@@ -130,15 +130,21 @@ From the project root, with `beats.json` and the directories it references
 already in place:
 
 ```bash
-SILL_BEAT_INTERVAL_SECONDS=1 timeout 300 sill-worker --mode beat
+SILL_BEAT_INTERVAL_SECONDS=1 sill-worker --mode beat
 ```
 
 `SILL_BEAT_INTERVAL_SECONDS=1` makes the loop fire again almost
-immediately after each beat instead of waiting two hours; `timeout 300`
-guarantees the check ends on its own after five minutes even if a beat is
-still running. You only need to see the *first* beat's outcome — the loop
-firing rapidly afterward doesn't mean anything went wrong, and `timeout`
-killing an in-flight second or third beat is expected, not a failure.
+immediately after each beat instead of waiting two hours. Run this in the
+foreground and watch the log lines it prints; once you see the *first*
+beat's outcome (`Beat complete`, or the `produced no file` warning), press
+Ctrl-C — you don't need the loop to keep running, and interrupting an
+in-flight second or third beat is expected, not a failure. (Don't reach
+for GNU `timeout` to bound this instead: it isn't on stock macOS, and this
+repo ships a macOS LaunchAgent template alongside the systemd unit, so
+macOS has to work here without extra installs. If you do have GNU
+coreutils' `timeout` — or `gtimeout` from Homebrew — available and prefer
+it, `timeout 300 sill-worker --mode beat` after the same env var works
+identically.)
 
 Expected output starts with a startup banner naming every voice and the
 derived guard scope, for example:
@@ -321,12 +327,75 @@ look, not just the worker's own log.
 **Verify with the by-hand run above, before installing any schedule:**
 
 ```bash
-SILL_BEAT_INTERVAL_SECONDS=1 timeout 300 sill-worker --mode beat
+SILL_BEAT_INTERVAL_SECONDS=1 sill-worker --mode beat
 ```
 
 Look for `Beat complete` (verified success), not the `produced no file`
-warning. Only once you've seen a real success line should you move on to
-Scheduling.
+warning, then Ctrl-C — see "Running one beat by hand" above for why no
+`timeout` wrapper is needed. Only once you've seen a real success line
+should you move on to Scheduling.
+
+---
+
+## Rotation starvation: one stuck voice blocks every voice
+
+`advance_if()` (`backend/beat_worker.py`) only ever moves the rotation
+past the voice that *just ran*, and only on verified success. That's the
+right call for that one voice — a failing voice should keep retrying next
+interval rather than have the worker silently give up on it. But the
+rotation state is a single shared index, not one clock per voice, so the
+consequence of that correct per-voice choice is global: as long as the
+voice currently due keeps failing, no *other* voice ever gets a turn
+either. **There is no cross-voice escape hatch** — nothing in this
+codebase currently limits how long one voice can hold the rotation
+hostage, and a schedule left running unattended will simply retry the
+same stuck voice forever.
+
+**What it looks like.** Confirmed live, on a two-voice rotation
+(`analyst`, `reflector`): `analyst` ran once successfully, then
+`reflector` failed eight consecutive scheduled intervals in a row — and
+`analyst` never ran again for that entire stretch, despite being healthy
+the whole time. Nothing about this looks like an error from the outside:
+the schedule keeps ticking on time, the worker process keeps running, and
+the log keeps growing. The only tell is *which* voice's name is in it.
+
+**Common per-voice causes:** a typo'd `output_glob` that no file the
+voice actually writes will ever match; a permission gap specific to one
+voice (its standing prompt uses a tool the other voices' prompts don't,
+and only that tool is denied); a standing prompt file that's missing or
+unreadable for one voice only; or anything in "Permissions" above
+happening to affect just one voice rather than all of them.
+
+**How to notice.** Every per-voice outcome line in the worker's log —
+success, timeout, transient-infrastructure skip, or the silent-failure
+warning — starts with that voice's bracketed name followed by `Beat`
+(verified against every such call site in `spawn_beat()`). Over a window
+long enough to have expected each configured voice at least once
+(roughly *N* voices × `SILL_BEAT_INTERVAL_SECONDS`), collect the distinct
+names that actually appear:
+
+```bash
+grep -oE '\[[a-zA-Z0-9_-]+\] Beat' "${SILL_LOG_DIR:-/tmp}/beat-worker.log" \
+  | sort -u
+```
+
+If `beats.json` configures voices that never show up here, rotation is
+likely stuck on whichever voice *does*. Cross-check the rotation state
+file itself (`SILL_BEAT_STATE_PATH`, default
+`~/.local/state/sill/beat-rotation.json`) — its `next_index` will point at
+the same stuck voice, unmoving, beat after beat, while the missing
+voice's `output_glob`/`transcripts` directory stays untouched.
+
+**How to fix.** Treat it as a single-voice failure and debug that one
+voice the normal way: read its transcripts, check its `output_glob`
+against what it's actually writing, re-run "Running one beat by hand"
+above until *that specific voice* logs `Beat complete`. There is
+currently no supported way to skip past a stuck voice and free the
+rotation short of fixing the underlying per-voice cause — hand-editing
+`next_index` in the state file would unstick the rotation mechanically,
+but is untested, unsupported, and does not cure anything: the same voice
+will simply fail again, and starve the rotation again, the next time it
+comes up.
 
 ---
 

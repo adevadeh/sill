@@ -403,8 +403,19 @@ minutes", "tonight") in two contexts:
 
 1. Memory storage (`mcp__sill__remember*` calls) — flags before
    they enter the corpus.
-2. `Write` / `Edit` to files under `journals/` or `docs/` — flags
-   before they enter the source tree.
+2. `Write` / `Edit` to files in scope — flags before they enter the
+   source tree. By default, scope is files under `journals/` or
+   `docs/`. If `SILL_BEAT_JOURNAL_DIRS` is set (non-empty), it
+   **replaces** that default rather than adding to it — scope becomes
+   exactly the colon-separated fragments in the variable, and
+   `journals/`/`docs/` are no longer checked unless one of those
+   fragments happens to name them. The beat worker sets this
+   variable on every beat child (see `docs/beats.md`), derived from
+   the running voice config — so a beat child writing under `docs/`
+   or `journals/` directly is *not* state-language-checked once the
+   beat worker is in use. An interactive session, or any install that
+   never touches the beat worker, never sees the variable set and
+   keeps the plain `journals/`+`docs/` default.
 
 These phrases tend to be exit-scripts without referents in an LLM. The
 hook is non-blocking; it just asks "do you have the state you're
@@ -414,7 +425,10 @@ describing, or are you matching human convention?"
 `mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|apply_patch|Edit|Write`.
 
 **Env vars:** `SILL_PROJECT_ROOT` (default `cwd`), `SILL_LOG_DIR`
-(default `/tmp`).
+(default `/tmp`), `SILL_BEAT_JOURNAL_DIRS` (default unset — see scope
+above; same opt-in variable `stored-slot-guard` and
+`tool-type-witness` read, but here it replaces rather than adds to
+the fallback default).
 
 **How to disable:** remove the matching `PreToolUse` entry.
 
