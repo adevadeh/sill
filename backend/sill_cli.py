@@ -18,6 +18,13 @@ Subcommands wired so far:
                             (name, charter, engine, scope, harnesses) —
                             see backend/scripts/identity_card.py and
                             docs/identity.md. Run 'sill identity --help'.
+  sill backfill plan|run   Consent-scoped scan of harness transcripts into
+                            a durable, undoable archive. 'plan' reports
+                            what would be read and writes nothing; 'run'
+                            requires --confirm. See
+                            backend/scripts/backfill_scan.py and
+                            docs/onboarding/02-backfill.md. Run
+                            'sill backfill --help'.
 """
 
 from __future__ import annotations
@@ -61,6 +68,14 @@ def _cmd_identity(args: argparse.Namespace, extra: list[str]) -> int:
     from scripts.identity_card import main as _identity_main
 
     return _identity_main(extra)
+
+
+def _cmd_backfill(args: argparse.Namespace, extra: list[str]) -> int:
+    """Delegate to backfill_scan's own parser so 'sill backfill ...' and
+    'python -m scripts.backfill_scan ...' accept identical argv."""
+    from scripts.backfill_scan import main as _backfill_main
+
+    return _backfill_main(extra)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,6 +131,18 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False,
     )
     identity.set_defaults(func=_cmd_identity)
+
+    # backfill — consent-scoped episodic backfill (plan/run). Same
+    # passthrough shape as notice/identity above: this subparser declares
+    # none of backfill_scan's own subcommands or flags and disables its own
+    # -h/--help, so 'sill backfill --help' shows backfill_scan's real usage
+    # and the argv shape lives in exactly one place (backfill_scan.build_parser).
+    backfill = sub.add_parser(
+        "backfill",
+        help="Consent-scoped scan of harness transcripts. See 'sill backfill --help'.",
+        add_help=False,
+    )
+    backfill.set_defaults(func=_cmd_backfill)
 
     return parser
 
