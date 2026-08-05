@@ -13,6 +13,11 @@ Subcommands wired so far:
                             delegates to sill.py's own parser so this
                             subcommand's argv shape lives in exactly one
                             place. Run 'sill notice --help' for its flags.
+  sill identity show|init|set
+                            Read or write this instance's identity card
+                            (name, charter, engine, scope, harnesses) —
+                            see backend/scripts/identity_card.py and
+                            docs/identity.md. Run 'sill identity --help'.
 """
 
 from __future__ import annotations
@@ -48,6 +53,14 @@ def _cmd_notice(args: argparse.Namespace, extra: list[str]) -> int:
     import sill
 
     return sill.main(["notice", *extra])
+
+
+def _cmd_identity(args: argparse.Namespace, extra: list[str]) -> int:
+    """Delegate to identity_card's own parser so 'sill identity ...' and
+    'python -m scripts.identity_card ...' accept identical argv."""
+    from scripts.identity_card import main as _identity_main
+
+    return _identity_main(extra)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -90,6 +103,19 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=False,
     )
     notice.set_defaults(func=_cmd_notice)
+
+    # identity — the identity card (show/init/set). Same passthrough shape
+    # as notice above: this subparser declares none of identity_card's own
+    # subcommands or flags and disables its own -h/--help, so 'sill identity
+    # --help' shows identity_card's real usage rather than this shell's
+    # empty one, and the argv shape lives in exactly one place
+    # (identity_card.build_parser).
+    identity = sub.add_parser(
+        "identity",
+        help="Read or write this instance's identity card. See 'sill identity --help'.",
+        add_help=False,
+    )
+    identity.set_defaults(func=_cmd_identity)
 
     return parser
 
