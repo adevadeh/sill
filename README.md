@@ -128,9 +128,9 @@ first `docker compose up`.
 - `rabbitmq` — Used by the maintenance worker for inter-process events.
 - `maintenance_worker` — Default-on. Importance decay, drift tracking,
   housekeeping.
-- `heartbeat_worker` — **Opt-in only** via the `heartbeat` Compose
-  profile. Periodic synthesis / reflection cycles. Don't bring this up
-  unless you've configured an LLM provider.
+
+Reflective processing ships as the beat worker (see `docs/beats.md`), which is off
+until you turn it on.
 
 **Console scripts** (installed into pipx-managed bin, or
 `~/.local/bin` if pipx isn't available):
@@ -211,6 +211,28 @@ out to had no `notice` subcommand until this path was wired.
 
 ---
 
+## Reflective beats
+
+A config-driven rotation of headless agent-CLI sessions — each running
+its own standing prompt through orient → decide → act → store → log, each
+producing its own transcript — that fires on a timer instead of only when
+you're at the keyboard. **Off by default, opt-in**: nothing runs until you
+write a `beats.json` and start `sill-worker --mode beat` yourself, by hand
+or under a schedule.
+
+**Read `docs/beats.md` before turning this on** — specifically its
+Permissions section, before its Scheduling section. A non-interactive
+agent CLI with no tool permissions configured for the directory it runs in
+gets every tool call denied rather than prompted and exits 0 having done
+nothing; a beat worker with that problem ticks on a schedule forever while
+accomplishing nothing, and nothing about the schedule itself will tell you
+that's what's happening. `docs/beats.md` covers the voice config format, a
+worked example, the full env-var surface, how to run one beat by hand and
+confirm it actually did something, and the scheduling templates under
+`scheduling/` for running it unattended once you have.
+
+---
+
 ## Adding hooks to a project
 
 If you want Sill's hooks to run in a specific project (recall on prompt
@@ -279,6 +301,9 @@ detects it on each call.
 - `docs/extending.md` — writing good memories, the quality gate,
   adding your own hooks, customizing rule files and triggers,
   env-var cheat sheet.
+- `docs/beats.md` — the reflective beat worker: voice config, the
+  env-var surface, permissions (read this before scheduling anything),
+  running one beat by hand, reading a transcript.
 
 ---
 

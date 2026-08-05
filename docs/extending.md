@@ -267,6 +267,34 @@ export POSTGRES_PASSWORD=sill_test_password
 | `SILL_RESEARCH_MANIFEST`     | `<root>/docs/research-manifest.json`   | Optional manifest read by precompact-snapshot |
 | `SILL_LOG_DIR`               | `/tmp`                                 | Where every hook's `.log` file lives, plus every sidecar/state file: `recall-sidecar-<session>.jsonl`, `response-patterns-last-<session>.json`, `response-patterns-data.jsonl`, `auto-stored-insights.jsonl`, `verification-state.json`, `cc-session-by-pid/` |
 
+Note `SILL_BEAT_SESSIONS_DIR` above is unrelated to the beat worker below
+despite the name — it's attribution-check's F1 check looking for
+`beat-NNN-*.md` citation targets, a different, older feature.
+
+### Beat worker (`sill-worker --mode beat`)
+
+Full field-by-field and worked-example coverage lives in `docs/beats.md`;
+this is the flat env-var reference. None of these are set by `install.sh`
+— the worker reads them fresh at import/spawn time, and the scheduling
+templates under `scheduling/` set the ones worth pinning explicitly for an
+unattended install.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `SILL_BEAT_CONFIG`           | `beats.json` at the project root                                              | Voice definitions — see `backend/beats.example.json`. |
+| `SILL_BEAT_INTERVAL_SECONDS` | `7200` (2h)                                                                    | Time between beats. |
+| `SILL_BEAT_TIMEOUT_SECONDS`  | `1800` (30min)                                                                 | Per-beat subprocess wall-clock cap. |
+| `SILL_BEAT_STATE_PATH`       | `$XDG_STATE_HOME/sill/beat-rotation.json`, else `~/.local/state/sill/beat-rotation.json` | Rotation index — **never `/tmp`**. |
+| `SILL_BEAT_LOG_PATH`         | `$SILL_LOG_DIR/beat-worker.log`                                                | The worker's own log. |
+| `SILL_BEAT_CLI`              | `claude`                                                                       | The agent CLI executable to spawn. |
+| `SILL_BEAT_WATCHDOG_SOCKET`  | unset                                                                          | Ping this socket before every spawn; log-only, unset skips the probe. |
+| `SILL_BEAT_POST_HOOK`        | unset                                                                          | Command run after a successful beat; log-only, never fails the beat. |
+| `SILL_BEAT_JOURNAL_DIRS`     | unset; **the worker sets it itself** on every beat child                      | Scope for `stored-slot-guard.py` / `tool-type-witness.py` (opt-in — unset means they check nothing) and `state-language-check.py`, where it **replaces** — not adds to — the `journals/`/`docs/` default. Consequence: with the shipped `beats.example.json`, the derived scope is `notes/:logs/analyst/:journal/:logs/reflector/`, so once a beat sets this, a beat child writing under `docs/` or `journals/` directly is *not* state-language-checked — only the derived voice directories are. Derived by `beat_worker.journal_dirs_for_voices()` from the loaded `beats.json`: every voice's `output_glob` directory plus its `transcripts` dir, colon-joined. You should not set this by hand — the worker's startup log prints the value it derived. |
+
+`SILL_DETACHED_BEAT` is also set by the worker on every beat child, but is
+documented below under the headless/interactive gate, since that's the
+hook logic that actually reads it.
+
 ### Headless / interactive gate (spontaneous-recall)
 
 Read fresh on every `UserPromptSubmit`; none of these are set by
@@ -317,7 +345,6 @@ order.
 | `SILL_EMBEDDINGS_CONTAINER`        | `sill_embeddings`          |
 | `SILL_RABBITMQ_CONTAINER`          | `sill_rabbitmq`            |
 | `SILL_MAINTENANCE_WORKER_CONTAINER`| `sill_maintenance_worker`  |
-| `SILL_HEARTBEAT_WORKER_CONTAINER`  | `sill_heartbeat_worker`    |
 
 Useful when running multiple Sill stacks on the same host.
 

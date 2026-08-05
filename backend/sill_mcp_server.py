@@ -880,7 +880,7 @@ def _tools() -> list[Any]:
         ),
         _tool(
             "request_exploration",
-            "Request the heartbeat to explore a specific query.",
+            "Request a background exploration of a specific query.",
             {
                 "type": "object",
                 "properties": {

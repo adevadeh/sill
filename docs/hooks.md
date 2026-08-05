@@ -1,24 +1,32 @@
 # Hooks
 
-Sill ships twelve hooks under `plugin/hooks/`. They fall into five groups:
+Sill ships fourteen hooks under `plugin/hooks/`. They fall into five groups:
 
 - **Recall** — `spontaneous-recall`.
 - **Discipline checks** — `track-reuse`, `track-verification`,
   `attribution-check`, `check-agreement`, `check-corrections`,
   `response-patterns`, `state-language-check`.
-- **Guards** — `shell-idiom-guard`.
+- **Guards** — `shell-idiom-guard`, `stored-slot-guard`,
+  `tool-type-witness`.
 - **Materialization** — `precompact-snapshot`, `goodnight-checkpoint`.
 - **Session continuity** — `clear-handoff`.
 
-Eleven of the twelve are non-blocking: they emit `systemMessage` /
-`additionalContext` advice but never abort a tool call. The one
-exception is `shell-idiom-guard`, which returns
-`permissionDecision: "deny"` on a match — it exists specifically to
-block a shell footgun before it runs. Confirm the split yourself:
+Eleven of the fourteen are non-blocking: they emit `systemMessage` /
+`additionalContext` advice but never abort a tool call. The three
+exceptions are the whole Guards group — `shell-idiom-guard`,
+`stored-slot-guard`, `tool-type-witness` — which return
+`permissionDecision: "deny"` on a match. `shell-idiom-guard` blocks a
+shell footgun before it runs; the other two block a fabricated or
+self-contradicting receipt line before it lands in a journal (see
+their sections below — both are opt-in via `SILL_BEAT_JOURNAL_DIRS`
+and cost nothing on an install that never sets it). Confirm the split
+yourself:
 
 ```bash
 grep -rl permissionDecision plugin/hooks/
-# -> plugin/hooks/shell-idiom-guard.py   (the only one)
+# -> plugin/hooks/shell-idiom-guard.py
+#    plugin/hooks/stored-slot-guard.py
+#    plugin/hooks/tool-type-witness.py
 ```
 
 Disabling any hook is a matter of removing or commenting out one entry
@@ -395,8 +403,19 @@ minutes", "tonight") in two contexts:
 
 1. Memory storage (`mcp__sill__remember*` calls) — flags before
    they enter the corpus.
-2. `Write` / `Edit` to files under `journals/` or `docs/` — flags
-   before they enter the source tree.
+2. `Write` / `Edit` to files in scope — flags before they enter the
+   source tree. By default, scope is files under `journals/` or
+   `docs/`. If `SILL_BEAT_JOURNAL_DIRS` is set (non-empty), it
+   **replaces** that default rather than adding to it — scope becomes
+   exactly the colon-separated fragments in the variable, and
+   `journals/`/`docs/` are no longer checked unless one of those
+   fragments happens to name them. The beat worker sets this
+   variable on every beat child (see `docs/beats.md`), derived from
+   the running voice config — so a beat child writing under `docs/`
+   or `journals/` directly is *not* state-language-checked once the
+   beat worker is in use. An interactive session, or any install that
+   never touches the beat worker, never sees the variable set and
+   keeps the plain `journals/`+`docs/` default.
 
 These phrases tend to be exit-scripts without referents in an LLM. The
 hook is non-blocking; it just asks "do you have the state you're
@@ -406,7 +425,10 @@ describing, or are you matching human convention?"
 `mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|apply_patch|Edit|Write`.
 
 **Env vars:** `SILL_PROJECT_ROOT` (default `cwd`), `SILL_LOG_DIR`
-(default `/tmp`).
+(default `/tmp`), `SILL_BEAT_JOURNAL_DIRS` (default unset — see scope
+above; same opt-in variable `stored-slot-guard` and
+`tool-type-witness` read, but here it replaces rather than adds to
+the fallback default).
 
 **How to disable:** remove the matching `PreToolUse` entry.
 
@@ -426,10 +448,12 @@ printf '%s' '{"tool_name": "mcp__sill__remember", "tool_input": {"content": "My 
 starting with `=` right after `echo` (e.g. `echo === && ls`) either
 substitutes a path in place of the word or silently swallows the rest
 of a compound command, corrupting it without an error the operator is
-likely to notice. This is the **one hook in the whole suite that
-blocks** rather than advises — it returns
+likely to notice. This is one of the three hooks in the suite that
+**block** rather than advise — it returns
 `permissionDecision: "deny"` on a match, instead of `systemMessage`
-or `additionalContext`.
+or `additionalContext`. (The other two, `stored-slot-guard` and
+`tool-type-witness` below, guard mint receipts instead of shell
+commands.)
 
 **When it fires:** `PreToolUse` matching `Bash`. Timeout: 10s. This
 matcher is independent of `attribution-check`'s and
@@ -453,6 +477,105 @@ printf '%s' '{"tool_name": "Bash", "tool_input": {"command": "echo === && ls"}}'
 printf '%s' '{"tool_name": "Bash", "tool_input": {"command": "echo \"===\""}}' \
   | python3 plugin/hooks/shell-idiom-guard.py
 # -> no output, exit 0 — quoted separators are safe.
+```
+
+---
+
+## stored-slot-guard
+
+**What it does:** Checks any `Stored:` receipt line in a `Write`/`Edit`
+against the memory store before the tool call is allowed through — a
+receipt naming an id that was never actually minted is a fabrication,
+and it becomes permanent the moment the write lands. The canonical
+pre-mint form is the literal placeholder line `sill.py` exports as
+`RECEIPT_PLACEHOLDER` (resolved at runtime, never hand-typed into the
+hook), so placeholder lines pass by construction; a backticked or
+blockquoted mention of a fake id is treated as specimen material, not
+a claim, and also passes — only a bare, unquoted receipt line naming
+an id absent from the store is denied.
+
+**When it fires:** `PreToolUse` matching `Write|Edit`. Timeout: 10s.
+
+**Env vars:**
+
+- `SILL_BEAT_JOURNAL_DIRS` (default unset) — opt-in scope, a
+  colon-separated list of path fragments. Unset or empty means no
+  scope at all, so an install that never turned on the beat worker
+  pays nothing for this check. **You don't set this by hand**: from
+  the 2026-08-04 wiring, `beat_worker.spawn_beat()` derives it fresh
+  on every spawn from your loaded `beats.json` — every voice's
+  `output_glob` directory plus its `transcripts` dir, colon-joined —
+  and exports it to the beat child automatically. The worker's
+  startup log prints the derived value (`Guard scope
+  (SILL_BEAT_JOURNAL_DIRS for each child): ...`) so you can see
+  exactly what it resolved to; see `docs/beats.md`.
+- `SILL_DB_CONTAINER` (default `sill_db`), `SILL_DB_USER` (default
+  `sill`), `SILL_DB_NAME` (default `sill`) — same shipped defaults as
+  every other DB-touching hook.
+
+**Known limits:** fails OPEN when the store is unreachable — a down
+store must never block a journal write, so each id is checked
+independently and one unreachable lookup skips only that id. A
+forgery wearing full quote typography around the *whole* receipt line
+also passes this specific guard; `tool-type-witness` below and any
+downstream record checks cover that side.
+
+**How to disable:** remove the `PreToolUse` entry (matcher
+`Write|Edit`) whose command is `stored-slot-guard.py`.
+
+**Canned test** (a receipt-shaped id the store has never seen; a fake
+`docker` on `PATH` makes every lookup deterministically report "no
+matching row" so this runs with no live database):
+
+```bash
+mkdir -p /tmp/sill-fakebin && cat > /tmp/sill-fakebin/docker <<'EOF'
+#!/bin/sh
+echo 0
+EOF
+chmod +x /tmp/sill-fakebin/docker
+
+printf '%s' '{"tool_name": "Write", "tool_input": {"file_path": "journal/r-001.md", "content": "Stored: deadbeef-1111-2222-3333-444455556666\n"}}' \
+  | PATH="/tmp/sill-fakebin:$PATH" SILL_BEAT_JOURNAL_DIRS="journal/" \
+    python3 plugin/hooks/stored-slot-guard.py
+# -> {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+#      "permissionDecision": "deny", "permissionDecisionReason": "stored-slot-guard: ..."}}, exit 0.
+```
+
+---
+
+## tool-type-witness
+
+**What it does:** Denies a `Write` whose content makes an unquoted
+claim about its own carrying-act history — phrases like "arrived by
+Edit", "held the literal placeholder", "initial Write ended at" —
+because the claim is a performative contradiction: it is falsified by
+the fact that the `Write` tool, not an `Edit`, is what's carrying the
+text right now. Quoted, backticked, or blockquoted occurrences of the
+same phrases pass through untouched, since those are citations of the
+pattern, not instances of it; an honest report of that history can
+only be written from inside an `Edit`, which this hook doesn't match.
+
+**When it fires:** `PreToolUse` matching `Write` only. Timeout: 10s.
+Registered on `Write` only by design — an `Edit`-delivered version of
+this same text is not a contradiction, so checking `Edit` would only
+cost a wasted interpreter start on every edit.
+
+**Env vars:**
+
+- `SILL_BEAT_JOURNAL_DIRS` — same opt-in scope, same automatic
+  derivation by the beat worker, as `stored-slot-guard` above. Fails
+  open on any parse error.
+
+**How to disable:** remove the `PreToolUse` entry (matcher `Write`)
+whose command is `tool-type-witness.py`.
+
+**Canned test:**
+
+```bash
+printf '%s' '{"tool_name": "Write", "tool_input": {"file_path": "journal/r-001.md", "content": "The receipt arrived by Edit after the mint.\n"}}' \
+  | SILL_BEAT_JOURNAL_DIRS="journal/" python3 plugin/hooks/tool-type-witness.py
+# -> {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+#      "permissionDecision": "deny", "permissionDecisionReason": "tool-type-witness: ..."}}, exit 0.
 ```
 
 ---
