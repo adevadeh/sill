@@ -1,0 +1,5 @@
+[features]
+hooks = true
+
+[mcp_servers.sill]
+command = "sill-mcp"
