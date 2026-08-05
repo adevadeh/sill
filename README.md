@@ -12,6 +12,10 @@ across sessions — without paying a SaaS for it.
 > Status: v0.2.0 — see `CHANGELOG.md` for what changed since the v0.1.0
 > extraction, and `docs/RELEASE-REHEARSAL.md` for what a clean-machine
 > install of this version was and was not observed to do.
+>
+> **Upgrading an existing v0.1.0 install?** Four things bite silently if
+> you stop at `git pull` — see "Upgrading" below before you do anything
+> else.
 
 ---
 
@@ -134,6 +138,40 @@ entries in the same run. An invalid `--scope` value exits non-zero
 naming the valid ones. Full flag reference: `./install.sh --help`.
 
 ## Upgrading
+
+**Coming from v0.1.0?** Don't stop at `git pull` — three more steps
+matter, and none of them fail loudly if skipped:
+
+```bash
+git pull
+./install.sh                                # reinstalls the backend (fixes
+                                             # the MCP server) and fixes MCP
+                                             # registration
+./upgrade.sh --hooks-for /path/to/project   # backs up + migrates the schema,
+                                             # refreshes stale Codex hooks
+```
+
+- **`./install.sh`** is idempotent and safe to re-run. It reinstalls the
+  backend against this release's corrected `mcp<2` pin — v0.2.0's MCP
+  server could fail to start entirely on the unpinned dependency, while
+  `verify.sh` still reported green (see CHANGELOG) — and fixes *where*
+  the server gets registered: `~/.claude.json`, not the
+  `~/.claude/.mcp.json` earlier installs may have written and Claude
+  Code never reads. Confirm with `claude mcp list` → `sill … ✔
+  Connected`.
+- **`./upgrade.sh --hooks-for`** is what refreshes a stale Codex hook
+  set. `.codex/hooks.json` has only ever been written once and left
+  alone on every later run, so a project wired for Codex before this
+  release can still be running the *old* hooks there. Run it per
+  project you'd previously wired; it shows a diff before touching
+  anything (`--force-hooks` to apply).
+
+Full detail on all of this, including why each failure was silent:
+`CHANGELOG.md`'s "Upgrading from v0.1.0" section.
+
+---
+
+For a routine upgrade once you're already on v0.2.0 or later:
 
 ```bash
 git pull

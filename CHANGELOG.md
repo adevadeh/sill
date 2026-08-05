@@ -5,6 +5,72 @@ All notable changes to Sill are recorded here. Format loosely follows
 
 ## v0.2.0 — 2026-08-05
 
+### Upgrading from v0.1.0
+
+**Four things bite silently if you stop at `git pull` — read this before
+you do.** In order: `git pull`; `./install.sh` (idempotent — reinstalls
+the backend and fixes MCP registration, items 1–2 below); `./upgrade.sh
+--hooks-for /path/to/project` (backs up, migrates the schema, and
+refreshes a stale Codex hook set, items 3–4 below; it runs `verify.sh`
+itself at the end).
+
+1. **The MCP server did not run on a fresh v0.2.0 install.** An unpinned
+   `mcp>=1.0.0` resolved to mcp 2.x, which removed the
+   `Server.list_tools()` API `sill-mcp` registers through, so it died at
+   startup with `'Server' object has no attribute 'list_tools'` — while
+   `verify.sh` still reported green, because that check only ran
+   `sill-mcp --help`, which exits before the MCP SDK loads. Now pinned
+   `mcp>=1.0.0,<2`; `verify.sh` check 2 performs a real `initialize`
+   handshake instead. Existing installs may already be broken —
+   reinstalling the backend (`./install.sh`) and re-running `verify.sh`
+   confirms it either way.
+2. **`install.sh` registered the MCP server where Claude Code never
+   looks.** It wrote `~/.claude/.mcp.json`; the real user-scope registry
+   is `~/.claude.json`. An install that reported success may never have
+   registered the server at all. `./install.sh` is idempotent and now
+   runs `claude mcp add --scope user` (or merges `~/.claude.json`
+   directly if the `claude` CLI isn't on `PATH`); confirm with `claude
+   mcp list` → `sill … ✔ Connected`.
+3. **`--hooks-for` has only ever written `.codex/hooks.json` once**, then
+   silently left it alone on every later run. A project wired for Codex
+   before this release can still be running the *old* hook set there —
+   which, as of this release, means missing three guards
+   (`shell-idiom-guard`, `tool-type-witness`, `stored-slot-guard`) that
+   never fired on Codex at all until now (see Fixed, below). Run
+   `./upgrade.sh --hooks-for /path/to/project` for every project you'd
+   previously wired: it diffs the current template against what's there
+   and shows the diff before touching anything; add `--force-hooks` to
+   apply it.
+4. **Schema changes now go through a versioned migration lane**
+   (`backend/migrations/`) instead of one baked-in `schema.sql` — `git
+   pull` alone never touches a running database. `./upgrade.sh` backs up
+   first (`backups/<db>-preupgrade-<UTC>.sql.gz`), applies pending
+   migrations in order, then runs `verify.sh`. Preview with `--dry-run`.
+   A fresh install never needs this step — first boot already
+   initializes at the current schema level.
+
+Also true of this release, easy to miss because nothing forces you to
+read it:
+
+- **The insight auto-store path was inert in v0.1.0** — the CLI had no
+  `notice` subcommand for it to call. Wired now, off by default
+  (`SILL_INSIGHT_DETECT`; see `docs/extending.md`).
+- **The dreaming heartbeat mode is gone.** `--mode heartbeat` and the
+  `heartbeat` Compose profile no longer exist. The beat worker
+  (`--mode beat`) replaces it and is off until you configure and start
+  it yourself — see `docs/beats.md`. No automatic migration if you were
+  relying on the old heartbeat.
+- **An onboarding runbook and a christening now exist**
+  (`docs/onboarding/README.md`) — a phased walk from a working install
+  to a named instance with a human-authored charter and a chosen beat
+  cadence. Nothing about it requires a fresh install; an upgraded
+  v0.1.0 instance can walk it too.
+
+The full defect list is under Fixed, below — every one of them found by
+this release's own clean-machine acceptance rehearsal
+(`docs/RELEASE-REHEARSAL.md`). Honest limits, including what that
+rehearsal could not verify, are at the end of this entry.
+
 ### Added
 
 - **Schema migration lane** — versioned migrations under `backend/migrations/`
@@ -201,7 +267,14 @@ more defects (§5 of the same document):
   `backend/.env` itself, with Compose's precedence.
 
 - `get_embedding` no longer fails on content containing literal backslashes
-  (encoding-safe `convert_to` replaces the escape-interpreting `::bytea` cast).
+  (encoding-safe `convert_to` replaces the escape-interpreting `::bytea`
+  cast). Diagnosed independently by contributor Paul Taysom
+  ([@taysom](https://github.com/taysom)) in PR #2, filed 2026-06-09 — a
+  month before this project's own independent rediscovery (2026-07-09)
+  shipped here as migration 004
+  (`backend/migrations/004_get_embedding_backslash_fix.sql`). Same bug,
+  same fix (`convert_to(text, 'UTF8')`), independent lineage — his
+  diagnosis came first.
 - Access telemetry decoupled from importance (removed the compounding
   importance-on-access trigger path; `touch_memory_access` is pure telemetry).
 - v0.1.0's insight auto-store path was inert (the CLI had no `notice`
@@ -296,6 +369,48 @@ more defects (§5 of the same document):
   the same content as an idempotent heredoc merge instead of reading it (a
   static template can't safely replace that merge, since
   `~/.codex/config.toml` may pre-exist with unrelated content).
+
+### Honest limits
+
+No test in this release can prove a stranger will succeed. The
+clean-machine acceptance rehearsal (`docs/RELEASE-REHEARSAL.md`) proves
+the documented path works for an agent that already has this repo's
+context — walked start to finish, nine documentation defects found and
+fixed. What it could not do, and why, is itemized in its own §4 rather
+than restated here in full; in short:
+
+- **A charter and a name cannot be rehearsed by anything.** The
+  christening's substance is prose in a person's own words. A
+  placeholder exercised the mechanism; the act itself was not simulated
+  and cannot be.
+- **A default-named, default-ported install was not exercised end to
+  end.** This project's own development machine already held the four
+  default container names and three default ports, so both the
+  rehearsal and this release's own testing exercised the documented
+  side-by-side configuration, not the uncollided default path.
+- **The systemd scheduling template has never been loaded by
+  `systemctl`.** Its shape is unit-tested and its launchd counterpart is
+  loaded, confirmed, and unloaded on every macOS test run, but no Linux
+  machine available to this project has run it live. More generally: CI
+  runs the full backend suite plus a schema/migration-identity job on
+  Linux (`ubuntu-latest`, Python 3.10 and 3.12) on every push, but the
+  operator-facing shell — `install.sh` end to end, hook wiring into a
+  live agent harness, the beat worker — has so far only run on macOS.
+- **Codex support is newer and narrower than Claude Code's.** The
+  tool-name/event/payload schemas in `docs/adapters.md` were read from
+  one CLI build (0.144.1); the conformance fixtures are hand-written
+  against those documented schemas, not captured from a live session;
+  Codex Desktop, as opposed to the CLI, is unverified entirely.
+- **Cursor is out of scope for this release** (Q16.1) — the
+  session-peer kit was not ported. Desktop Claude and the ChatGPT app
+  keep conversations server-side with no local hook surface to wire
+  into; for both, the memory store itself is the only cross-surface
+  bridge.
+
+Full transcript, every phase's done-condition, and the complete list of
+what remains unverified and why: `docs/RELEASE-REHEARSAL.md`.
+Phase-scoped limits not repeated above are in each plan's own PR
+(#4–#9).
 
 ## v0.1.0 — 2026-06-03
 
