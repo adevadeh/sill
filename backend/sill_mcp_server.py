@@ -976,14 +976,9 @@ async def _run_server(dsn: str) -> None:
         return [TextContent(type="text", text=text)]
 
     try:
-        try:
-            server_version = version("sill-memory")
-        except PackageNotFoundError:  # local dev
-            server_version = "dev"
-
         init_opts = InitializationOptions(
             server_name="sill",
-            server_version=server_version,
+            server_version=_server_version(),
             capabilities=ServerCapabilities(tools=ToolsCapability()),
         )
 
@@ -993,9 +988,24 @@ async def _run_server(dsn: str) -> None:
         await client.close()
 
 
+def _server_version() -> str:
+    """The installed 'sill-memory' distribution's version (what pip/pipx
+    recorded at install time), or "dev" for an uninstalled checkout. Single
+    source for both the MCP initialize handshake's server_version and the
+    --version CLI flag, so the two can never independently drift."""
+    try:
+        return version("sill-memory")
+    except PackageNotFoundError:  # local dev, not pip-installed
+        return "dev"
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sill-mcp", description="MCP server exposing CognitiveMemory tools over stdio.")
     p.add_argument("--dsn", default=os.getenv("SILL_DB_DSN") or None, help="Postgres DSN; defaults to POSTGRES_* env vars")
+    p.add_argument(
+        "--version", action="version", version=f"%(prog)s {_server_version()}",
+        help="Print the installed sill-mcp version and exit.",
+    )
     return p
 
 

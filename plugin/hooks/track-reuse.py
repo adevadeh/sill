@@ -472,6 +472,11 @@ def main():
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
         sys.exit(0)
+    if not isinstance(input_data, dict):
+        # Valid JSON that isn't an object (e.g. a bare array) is exactly as
+        # unusable as invalid JSON — the log() call two lines down does
+        # input_data.get(...), which raises AttributeError on a list.
+        sys.exit(0)
 
     # Unconditional fire-trace so we can confirm the hook runs at all in production.
     log(f"hook invoked, transcript_path={input_data.get('transcript_path', 'MISSING')}")

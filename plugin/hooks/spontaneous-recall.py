@@ -479,6 +479,11 @@ try:
     input_data = json.load(sys.stdin)
 except json.JSONDecodeError:
     sys.exit(0)
+if not isinstance(input_data, dict):
+    # Valid JSON that isn't an object (e.g. a bare array) is exactly as
+    # unusable as invalid JSON — every input_data.get(...) below raises
+    # AttributeError on a list.
+    sys.exit(0)
 
 # `claude --print` (SDK/headless) invocations are non-conversational — no human
 # on the other end. They must not get recall injected into their prompt, nor

@@ -28,7 +28,16 @@ jobs:
         working-directory: backend
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev]'
+          # dev + diagnostics: without the latter, numpy is never installed
+          # here, so test_contributor_tools.py's
+          # test_memory_health_imports_cleanly_when_numpy_present always
+          # skipif-skips in CI — the numpy-present import path of
+          # memory_health.py would never run continuously, only the
+          # numpy-absent (ImportError-hint) path. test_memory_health_gives_
+          # install_hint_without_numpy stays exercised either way — it
+          # forces the absent case deterministically via a sys.modules
+          # sentinel, independent of what's actually installed.
+          pip install -e '.[dev,diagnostics]'
 
       - name: Run pytest
         working-directory: backend

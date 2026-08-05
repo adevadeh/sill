@@ -257,3 +257,51 @@ def test_frontmatter_parser_tolerates_comments(tmp_path):
                     "  - \\bteststring\\b\n---\nbody\n")
     pats, _ = rp.parse_frontmatter(rule.read_text())
     assert any("teststring" in p for p in pats.get("patterns", []))
+
+
+# --- carry_forward: the write side of the Stop->UserPromptSubmit sidecar ----
+#
+# response-patterns.py is a Stop hook — it fires after the reply is already
+# on screen, so its own additionalContext can't reach the turn that tripped
+# it. carry_forward() stashes this turn's warnings in a per-session sidecar
+# file that spontaneous-recall.py's _read_pattern_carry_forward() reads (and
+# deletes) at the top of the next turn. Neither side had any test coverage
+# before this file (flagged in review, P2 Task 5: "carry_forward write-side
+# untested" — the read side turned out to be equally untested, not just the
+# write side). The roundtrip through the real reader lives in
+# test_spontaneous_recall.py, which already has the subprocess harness for
+# driving that hook; these test carry_forward() itself in isolation.
+
+def test_carry_forward_writes_the_expected_sidecar_shape(tmp_path, monkeypatch):
+    monkeypatch.setattr(rp, "_SILL_LOG_DIR", tmp_path)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+    rp.carry_forward(["warning one", "warning two"], "sess-abc")
+
+    sidecar = tmp_path / "response-patterns-last-sess-abc.json"
+    assert sidecar.exists()
+    data = json.loads(sidecar.read_text())
+    assert data["warnings"] == ["warning one", "warning two"]
+    assert "timestamp" in data
+
+
+def test_carry_forward_prefers_the_env_session_id_over_the_argument(tmp_path, monkeypatch):
+    """Matches spontaneous-recall.py's own precedence (env wins there too;
+    see _sid's derivation) — a mismatch here would write under one key and
+    read under another, a silent miss."""
+    monkeypatch.setattr(rp, "_SILL_LOG_DIR", tmp_path)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "env-session")
+
+    rp.carry_forward(["w"], "argument-session")
+
+    assert (tmp_path / "response-patterns-last-env-session.json").exists()
+    assert not (tmp_path / "response-patterns-last-argument-session.json").exists()
+
+
+def test_carry_forward_no_ops_without_any_session_id(tmp_path, monkeypatch):
+    monkeypatch.setattr(rp, "_SILL_LOG_DIR", tmp_path)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+    rp.carry_forward(["w"], None)
+
+    assert list(tmp_path.iterdir()) == []

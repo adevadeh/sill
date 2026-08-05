@@ -353,11 +353,10 @@ SILL_CLI = os.environ.get("SILL_CLI", "sill")
 AUTO_STORE_LOG = _SILL_LOG_DIR / "auto-stored-insights.jsonl"
 
 # SILL_HOME_PROJECT names the "home" install (the project this plugin is
-# primarily deployed for). source_project() below re-reads the env var
-# itself on every call rather than trusting a frozen copy, so a process that
-# reconfigures the env after import is honored — notably this file's own
-# test suite, via monkeypatch.
-HOME_PROJECT_PATH = os.environ.get("SILL_HOME_PROJECT", "")
+# primarily deployed for). source_project() below reads the env var itself
+# fresh on every call rather than trusting a frozen module-level copy, so a
+# process that reconfigures the env after import is honored — notably this
+# file's own test suite, via monkeypatch.
 HOME_PROJECT_NAME = "home"
 
 # Whose act an auto-stored insight is: the running instance's own assertion.
@@ -792,6 +791,11 @@ def main():
     try:
         input_data = json.load(sys.stdin)
     except json.JSONDecodeError:
+        sys.exit(0)
+    if not isinstance(input_data, dict):
+        # Valid JSON that isn't an object (e.g. a bare array) is exactly as
+        # unusable as invalid JSON — get_response_text() below does
+        # data.get(...), which raises AttributeError on a list.
         sys.exit(0)
 
     response_text = get_response_text(input_data)

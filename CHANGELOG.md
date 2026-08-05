@@ -3,7 +3,7 @@
 All notable changes to Sill are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
-## v0.2.0-dev — unreleased
+## v0.2.0 — 2026-08-05
 
 ### Added
 
@@ -193,6 +193,40 @@ All notable changes to Sill are recorded here. Format loosely follows
   dependency, since `memory_health.py` is a diagnostic tool, not on the core
   memory-store path; `memory_health.py` now raises a clear install-hint
   `ImportError` instead of a bare one when numpy is absent.
+- `sill-mcp` had no `--version` flag — a known issue open since v0.1.0 (see
+  that release's own "Known issues" below). `sill-mcp --version` now exits
+  0 and prints the installed `sill-memory` distribution's version (`dev`
+  for an uninstalled checkout), sharing one lookup with the MCP
+  `initialize` handshake's `server_version` so the two can't drift apart.
+- `sill`'s top-level argv dispatch used `parse_known_args()` (needed so the
+  `notice`/`identity`/`backfill` passthrough subcommands can forward flags
+  to their own nested parsers untouched), which had the side effect of
+  silently swallowing a typo'd flag on every *other* subcommand too — e.g.
+  `sill seed import file.jsonl --wrogn-flag` ran as if the flag weren't
+  there instead of reporting "unrecognized arguments". Extra arguments are
+  now rejected the way `parse_args()` itself would, for every subcommand
+  except the three documented passthroughs.
+- Nine hooks (`attribution-check`, `check-agreement`, `check-corrections`,
+  `goodnight-checkpoint`, `response-patterns`, `spontaneous-recall`,
+  `state-language-check`, `track-reuse`, `track-verification`) called
+  `.get(...)` (or, for `check-agreement`, `"key" in data`) on the parsed
+  JSON payload without checking it was actually an object first. Valid
+  JSON that isn't an object — a bare array, string, number, `null`, or
+  bool — crashed each of them with an unhandled `AttributeError` or
+  `TypeError` instead of the exit-0-and-do-nothing every hook is supposed
+  to fall back to on unusable input.
+- `shell-idiom-guard` — the one hook in this suite that blocks rather than
+  advises — missed the zsh `echo =word` trap when it followed a leading
+  per-command environment assignment (`x=1 echo =y`; bash/zsh put `echo`
+  in command position there exactly as much as at the start of a line).
+- A voice's `output_glob` using a recursive glob segment (`journals/**/*.md`)
+  made `beat_worker.py`'s `SILL_BEAT_JOURNAL_DIRS` derivation compute a
+  scope fragment containing the literal characters `**`, which the guards'
+  plain substring check can never match against a real file path — silently
+  disabling `stored-slot-guard`/`tool-type-witness`/`state-language-check`'s
+  beat-aware scope for that voice. The shipped `beats.example.json` voices
+  don't use `**`, so this was live but dormant, not visibly broken, in the
+  default config.
 
 ### Changed
 

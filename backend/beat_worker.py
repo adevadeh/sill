@@ -145,13 +145,41 @@ def load_voices(path: Path) -> list[Voice]:
 # defines voices never sets the variable at all.
 # ---------------------------------------------------------------------------
 
+_GLOB_METACHARS = re.compile(r"[*?\[]")
+
+
+def _literal_prefix_dir(glob_pattern: str) -> str:
+    """The longest literal (no *, ?, or [) leading directory of a glob
+    pattern, e.g. 'journals/sili-beats/*.md' -> 'journals/sili-beats'.
+
+    A '**' path segment (matched by _GLOB_METACHARS same as '*') is itself
+    a wildcard, not a directory name — 'journals/**/*.md' must stop at
+    'journals', not include the '**' component. os.path.dirname() doesn't
+    know this: it would return 'journals/**' verbatim, and the guards that
+    consume this fragment do a plain substring check (`f in path`), never
+    re-interpreting '**' as a glob — so a fragment containing the literal
+    two characters "**" can never match a real write path, silently
+    disabling the guards for that voice. Stopping at the last literal
+    ancestor instead (here, 'journals/') keeps the scope correct, if
+    broader than a non-recursive glob's exact parent directory would be.
+    """
+    parts = glob_pattern.split("/")
+    literal: list[str] = []
+    for part in parts[:-1]:  # the last part is the filename pattern, never a directory
+        if _GLOB_METACHARS.search(part):
+            break
+        literal.append(part)
+    return "/".join(literal)
+
+
 def journal_dirs_for_voices(voices: list[Voice]) -> str:
     """Colon-joined, deduped, stable-order scope fragments for
-    SILL_BEAT_JOURNAL_DIRS: the directory part of every voice's
-    output_glob, then that voice's transcripts dir verbatim (already a
-    directory, not a glob) — in voice order, first-seen-wins on dupes.
-    Both are exactly the paths a beat's own writes land under, so together
-    they are the guards' correct scope without any operator input.
+    SILL_BEAT_JOURNAL_DIRS: the literal leading directory of every voice's
+    output_glob (see _literal_prefix_dir), then that voice's transcripts
+    dir verbatim (already a directory, not a glob) — in voice order,
+    first-seen-wins on dupes. Both are exactly the paths a beat's own
+    writes land under, so together they are the guards' correct scope
+    without any operator input.
     """
     fragments: list[str] = []
 
@@ -162,7 +190,7 @@ def journal_dirs_for_voices(voices: list[Voice]) -> str:
 
     for v in voices:
         if v.output_glob:
-            directory = os.path.dirname(v.output_glob)
+            directory = _literal_prefix_dir(v.output_glob)
             if directory:
                 add(directory)
         if v.transcripts:

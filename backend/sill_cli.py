@@ -147,6 +147,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Subcommands whose whole design is "forward argv to a nested module's own
+# parser untouched" (see their build_parser() entries above) — for these
+# alone, parse_known_args()'s leftover `extra` is not a typo, it's the
+# point. Every other subcommand declares its own arguments the normal way,
+# so leftover `extra` there really is unrecognized input and must be
+# rejected the way parse_args() would reject it directly.
+PASSTHROUGH_COMMANDS = frozenset({"notice", "identity", "backfill"})
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args, extra = parser.parse_known_args(argv)
@@ -154,6 +163,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if func is None:
         parser.print_help()
         return 2
+    if extra and getattr(args, "command", None) not in PASSTHROUGH_COMMANDS:
+        # Mirrors argparse's own parse_args()/error() wording and exit code
+        # (2) — parse_known_args() alone can't reject this per-subparser,
+        # so main() does it explicitly for every subcommand that isn't a
+        # documented passthrough.
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     try:
         return int(func(args, extra) or 0)
     except NotImplementedError as exc:

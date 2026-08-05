@@ -142,6 +142,11 @@ def main() -> None:
         payload = json.load(sys.stdin)
     except Exception:
         payload = {}
+    if not isinstance(payload, dict):
+        # Valid JSON that isn't an object (e.g. a bare array) is exactly as
+        # unusable as invalid JSON — payload.get(...) below raises
+        # AttributeError on a list.
+        payload = {}
     message = payload.get("prompt") or payload.get("message") or ""
 
     triggers = load_triggers()

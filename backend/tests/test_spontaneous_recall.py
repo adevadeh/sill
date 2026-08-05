@@ -19,6 +19,14 @@ def run_hook(payload, env_extra=None, cwd=None):
     env.pop("SILL_INTERACTIVE", None)
     env.pop("SILL_HEADLESS_TOOL", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    # This suite's own dev loop runs inside a real Claude Code session, so
+    # CLAUDE_CODE_SESSION_ID is live in the ambient environment — pop it
+    # like the other harness-identity vars above, so a test's payload
+    # session_id (the thing tests actually control) isn't silently
+    # shadowed by whatever session happens to be running pytest. A test
+    # that specifically wants CLAUDE_CODE_SESSION_ID set can still do so
+    # via env_extra below.
+    env.pop("CLAUDE_CODE_SESSION_ID", None)
     if env_extra:
         env.update(env_extra)
     return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
@@ -66,3 +74,51 @@ def test_no_sidecar_written_when_no_memories(tmp_path):
     env = {"PYTEST_SILL_LOG": str(tmp_path), "SILL_LOG_DIR": str(tmp_path)}
     run_hook({"prompt": "hello", "session_id": "tsx1"}, env)
     assert not list(tmp_path.glob("recall-sidecar-*"))
+
+
+# --- Pattern carry-forward: the read side of response-patterns.py's Stop-
+#     to-next-turn sidecar (see test_response_patterns.py's carry_forward
+#     tests for the write side; this is the roundtrip through the real
+#     reader, _read_pattern_carry_forward, via this hook's actual process
+#     boundary, matching this file's own subprocess-driven style).
+# ---------------------------------------------------------------------------
+
+def test_pattern_carry_forward_surfaces_and_consumes_the_sidecar(tmp_path):
+    sidecar = tmp_path / "response-patterns-last-carryfwd-sess.json"
+    sidecar.write_text(json.dumps({
+        "timestamp": "2026-08-05T00:00:00",
+        "warnings": ["you agreed without verifying last turn"],
+    }))
+
+    # _sid resolution prefers CLAUDE_CODE_SESSION_ID over the payload's
+    # session_id (matching carry_forward()'s own write-side precedence —
+    # see test_response_patterns.py's carry-forward tests) — set it
+    # explicitly rather than relying on it being absent from the ambient
+    # environment, which it is NOT when this suite runs inside a real
+    # Claude Code session (this repo's own dev loop, notably).
+    env = {"PYTEST_SILL_LOG": str(tmp_path), "SILL_LOG_DIR": str(tmp_path),
+           "CLAUDE_CODE_SESSION_ID": "carryfwd-sess"}
+    r = run_hook({"prompt": "short", "session_id": "carryfwd-sess"}, env)
+
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "[PATTERN CHECK" in ctx
+    assert "you agreed without verifying last turn" in ctx
+
+    # Delivered exactly once: the sidecar is consumed on read.
+    assert not sidecar.exists()
+
+
+def test_pattern_carry_forward_absent_is_a_quiet_no_op(tmp_path):
+    """No sidecar file at all (the common case — most turns trip no
+    response-pattern warning) must not add anything to the output, just
+    the ordinary time header."""
+    env = {"PYTEST_SILL_LOG": str(tmp_path), "SILL_LOG_DIR": str(tmp_path),
+           "CLAUDE_CODE_SESSION_ID": "no-sidecar-sess"}
+    r = run_hook({"prompt": "short", "session_id": "no-sidecar-sess"}, env)
+
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    ctx = out["hookSpecificOutput"]["additionalContext"]
+    assert "[PATTERN CHECK" not in ctx

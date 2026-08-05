@@ -42,6 +42,11 @@ try:
     input_data = json.load(sys.stdin)
 except json.JSONDecodeError:
     sys.exit(0)
+if not isinstance(input_data, dict):
+    # Valid JSON that isn't an object (e.g. a bare array) is exactly as
+    # unusable as invalid JSON — input_data.get(...) below raises
+    # AttributeError on a list.
+    sys.exit(0)
 
 # Reset verification state at start of each turn
 reset_verification_state()

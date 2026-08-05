@@ -219,6 +219,11 @@ def main() -> None:
         data = json.load(sys.stdin)
     except json.JSONDecodeError:
         sys.exit(0)
+    if not isinstance(data, dict):
+        # Valid JSON that isn't an object (e.g. a bare array or string) is
+        # exactly as unusable as invalid JSON — extract_content()'s first
+        # call is data.get(...), which raises AttributeError on a list.
+        sys.exit(0)
 
     content = extract_content(data)
     if not content or len(content) < 20:

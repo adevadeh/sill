@@ -54,7 +54,20 @@ _unquoted = re.sub(r'"[^"]*"', '""', _unquoted)
 
 # `echo` in command position followed by any unquoted word starting with `=`.
 # `echo =` alone, `echo a=b`, and quoted separators stay allowed.
-TRAP = re.compile(r"(?:^|[;&|`(]\s*)echo\s+=\S", re.MULTILINE)
+#
+# Command position is reached not just at the start of a line or right
+# after one of ;&|`( — bash/zsh also put the next word in command position
+# after one or more leading per-command environment assignments
+# (`VAR=val cmd args`, the syntax `env` documents; POSIX calls these
+# "simple command" prefixes). `_ASSIGN` accounts for that: zero or more
+# `NAME=value ` tokens immediately before `echo`. This is not a new false-
+# positive surface — `echo =word` unquoted is the trap regardless of what,
+# if anything, precedes it in valid shell syntax, so recognizing more of
+# the ways a shell can put `echo` in command position only closes gaps,
+# it doesn't open any (found: `x=1 echo =y` reached command position
+# completely unseen by the original boundary alternation).
+_ASSIGN = r"(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*"
+TRAP = re.compile(rf"(?:^|[;&|`(]\s*){_ASSIGN}echo\s+=\S", re.MULTILINE)
 
 if TRAP.search(_unquoted):
     print(json.dumps({

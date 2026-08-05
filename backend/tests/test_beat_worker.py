@@ -179,6 +179,53 @@ def test_journal_dirs_for_voices_empty_for_no_voices():
     assert bw.journal_dirs_for_voices([]) == ""
 
 
+# ---------------------------------------------------------------------------
+# Recursive glob (** ) in output_glob: os.path.dirname("journals/**/*.md")
+# is "journals/**" — a fragment containing a literal wildcard component,
+# not a directory. The guards consume this fragment as a plain substring
+# (plugin/hooks/stored-slot-guard.py: `any(f in path for f in fragments)`),
+# never re-interpreting "**" as a glob, so "journals/**/" as a scope
+# fragment can never match a real write path — no real path contains the
+# two literal characters "**". That silently makes the two opt-in guards
+# (and state-language-check.py's beat-aware fallback) inert for any voice
+# configured with a recursive glob, with no error anywhere: load_voices()
+# accepts the glob, spawn_beat() exports the useless fragment, and the
+# guard hooks just never fire. The shipped beats.example.json's two voices
+# don't happen to use "**", so this was live-but-dormant, not visibly
+# broken, in the default config.
+# ---------------------------------------------------------------------------
+
+def test_journal_dirs_for_voices_handles_recursive_glob():
+    """A '**' path segment is itself a wildcard, not a directory name, so
+    it cannot be part of the literal scope prefix — the derived fragment
+    must stop at the last literal ancestor directory ('journals/', not
+    'journals/**/') so it still substring-matches a real nested path."""
+    voices = [bw.Voice(name="a", prompt="p", transcripts="logs/a",
+                        output_glob="journals/**/*.md", kickoff="Begin.")]
+    scope = bw.journal_dirs_for_voices(voices)
+    assert "**" not in scope, f"scope fragment still contains a literal wildcard: {scope!r}"
+    assert scope == "journals/:logs/a/"
+
+    # The scope fragment must actually do its job: match the same
+    # substring check the real guards use (plugin/hooks/stored-slot-
+    # guard.py / tool-type-witness.py: `any(f in path for f in fragments)`).
+    fragments = [f for f in scope.split(":") if f]
+    real_write_path = "journals/reflector-beats/entry-042.md"
+    assert any(f in real_write_path for f in fragments), (
+        f"derived scope {fragments!r} does not match a real nested write "
+        f"path {real_write_path!r} — the recursive-glob bug this test guards"
+    )
+
+
+def test_journal_dirs_for_voices_recursive_glob_at_top_level():
+    """A bare '**/*.md' (no literal directory before the wildcard) yields
+    no usable literal prefix — same as no output_glob at all, not a
+    crash and not a bogus '**' fragment."""
+    voices = [bw.Voice(name="a", prompt="p", transcripts="logs/a",
+                        output_glob="**/*.md", kickoff="Begin.")]
+    assert bw.journal_dirs_for_voices(voices) == "logs/a/"
+
+
 def test_spawn_beat_exports_journal_dirs_derived_from_full_voice_config(tmp_path, monkeypatch):
     """The wiring this step exists for: spawn_beat() must export
     SILL_BEAT_JOURNAL_DIRS to the child, derived from every voice in the
@@ -302,3 +349,93 @@ def test_spawn_beat_sets_no_journal_dirs_var_when_derivation_is_empty(tmp_path, 
 
     assert success is True  # no output_glob declared -> produced_output() defaults True
     assert "SILL_BEAT_JOURNAL_DIRS" not in captured_env
+
+
+# ---------------------------------------------------------------------------
+# run_beat_loop(): the top-level `while True:` scheduler. Its pieces
+# (spawn_beat, advance_if, read_state, journal_dirs_for_voices) all have
+# direct coverage above; the loop function itself — which voice it reads,
+# how it calls spawn_beat/advance_if, whether it reaches the sleep call —
+# had none (flagged in review, P3 Task 2: "spawn_beat/run_beat_loop have
+# no permanent unit coverage of internal wiring"). It runs forever by
+# design, so driving it in a test needs a way to stop after exactly one
+# real iteration without adding a test-only seam to the production
+# function; patching time.sleep to raise a sentinel does that with zero
+# source changes, mirroring test_spawn_beat_survives_unreadable_prompt's
+# "call the real thing, control only its I/O boundary" style above.
+# ---------------------------------------------------------------------------
+
+class _StopAfterOneIteration(Exception):
+    """Raised by the patched time.sleep to end run_beat_loop's `while True:`
+    after exactly one iteration, once it reaches the sleep it would
+    otherwise block on."""
+
+
+def test_run_beat_loop_drives_one_full_iteration(tmp_path, monkeypatch):
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "analyst.md").write_text("Standing prompt.\n")
+    (tmp_path / "prompts" / "reflector.md").write_text("Standing prompt.\n")
+    cfg = tmp_path / "beats.json"
+    cfg.write_text(VOICES_JSON)
+    state_path = tmp_path / "state.json"
+
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setenv("SILL_BEAT_CONFIG", str(cfg))
+    monkeypatch.setenv("SILL_BEAT_STATE_PATH", str(state_path))
+    monkeypatch.setattr(bw, "POST_HOOK", None)
+    # A real INTERVAL_SECONDS (7200 default) would make a genuinely-reached
+    # sleep_time large and positive; fixing it at 0 keeps
+    # max(0, INTERVAL_SECONDS - beat_total) reliably > 0 isn't required —
+    # sleep() is patched to stop the loop regardless of the exact value,
+    # so what matters is only that the call is reached at all.
+    monkeypatch.setattr(bw, "INTERVAL_SECONDS", 300)
+
+    def fake_spawn_beat(voice, voices):
+        return True, 0.01, str(tmp_path / f"{voice.name}-transcript.md")
+
+    monkeypatch.setattr(bw, "spawn_beat", fake_spawn_beat)
+
+    def fake_sleep(seconds):
+        raise _StopAfterOneIteration(seconds)
+
+    monkeypatch.setattr(bw.time, "sleep", fake_sleep)
+
+    with pytest.raises(_StopAfterOneIteration) as exc_info:
+        bw.run_beat_loop()
+
+    # Reached the sleep with a sane, positive duration — proves beat_total
+    # was computed and subtracted from INTERVAL_SECONDS, not skipped.
+    assert exc_info.value.args[0] > 0
+
+    # The rotation actually advanced: voice 0 (analyst) ran and succeeded,
+    # so the state file must now point at voice 1 (reflector).
+    assert bw.read_state(state_path) == 1
+
+
+def test_run_beat_loop_does_not_advance_rotation_on_a_failed_beat(tmp_path, monkeypatch):
+    """Same drive-one-iteration harness as above, but spawn_beat reports
+    failure — the loop must still reach sleep (it always does, success or
+    not) while leaving rotation exactly where it started."""
+    (tmp_path / "prompts").mkdir()
+    (tmp_path / "prompts" / "analyst.md").write_text("Standing prompt.\n")
+    (tmp_path / "prompts" / "reflector.md").write_text("Standing prompt.\n")
+    cfg = tmp_path / "beats.json"
+    cfg.write_text(VOICES_JSON)
+    state_path = tmp_path / "state.json"
+
+    monkeypatch.setattr(bw, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setenv("SILL_BEAT_CONFIG", str(cfg))
+    monkeypatch.setenv("SILL_BEAT_STATE_PATH", str(state_path))
+    monkeypatch.setattr(bw, "POST_HOOK", None)
+    monkeypatch.setattr(bw, "INTERVAL_SECONDS", 300)
+    monkeypatch.setattr(bw, "spawn_beat", lambda voice, voices: (False, 0.01, ""))
+
+    def fake_sleep(seconds):
+        raise _StopAfterOneIteration(seconds)
+
+    monkeypatch.setattr(bw.time, "sleep", fake_sleep)
+
+    with pytest.raises(_StopAfterOneIteration):
+        bw.run_beat_loop()
+
+    assert bw.read_state(state_path) == 0, "a failed beat must not advance rotation"

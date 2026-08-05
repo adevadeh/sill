@@ -37,6 +37,11 @@ try:
     input_data = json.load(sys.stdin)
 except json.JSONDecodeError:
     sys.exit(0)
+if not isinstance(input_data, dict):
+    # Valid JSON that isn't an object (e.g. a bare array) is exactly as
+    # unusable as invalid JSON — input_data.get(...) below raises
+    # AttributeError on a list.
+    sys.exit(0)
 
 tool_name = input_data.get("tool_name", "")
 # Mark verification for any of these tools
