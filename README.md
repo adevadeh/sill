@@ -42,11 +42,36 @@ Then:
 ./verify.sh
 ```
 
-Four smoke checks: db/embeddings healthy, `sill-mcp --help` runs, seed
-loaded (>= 22 memories), one hook parses a canned event. Exits 0 on green.
+Five smoke checks: db/embeddings healthy, `sill-mcp --help` runs, seed
+loaded (>= 22 memories), one hook parses a canned event, schema level current. Exits 0 on green.
 
 Restart Claude Code (and/or Codex) so the new MCP server entry is picked
 up.
+
+## Upgrading
+
+```bash
+git pull
+./upgrade.sh
+```
+
+`upgrade.sh` backs up the database first (to `backups/<db>-preupgrade-<UTC>.sql.gz`),
+applies any pending `backend/migrations/NNN_*.sql` in order (tracked in the
+`schema_migrations` table), then runs `./verify.sh`. Preview with
+`./upgrade.sh --dry-run`. Fresh installs never need it — first boot already
+initializes at the current level (check with `./verify.sh`, check 5).
+
+Restore, if you ever need it — the dump replays into an **empty** database, so
+drop and recreate first, then verify (graph-extension data can be finicky
+across dump/restore, so treat `./verify.sh` as part of the restore):
+
+```bash
+docker exec sill_db psql -U sill -d postgres \
+  -c "DROP DATABASE IF EXISTS sill WITH (FORCE);" \
+  -c "CREATE DATABASE sill OWNER sill;"
+gunzip -c backups/<file>.sql.gz | docker exec -i sill_db psql -U sill -d sill
+./verify.sh
+```
 
 ---
 
@@ -154,7 +179,7 @@ Re-running is safe; existing hooks are preserved.
 ## Verifying, resetting, uninstalling
 
 ```bash
-./verify.sh        # four smoke checks; exits non-zero on failure
+./verify.sh        # five smoke checks; exits non-zero on failure
 ./reset.sh         # drops the postgres volume and re-seeds (asks first)
 ./uninstall.sh     # removes containers + volumes + backend + plugin symlink
 ./uninstall.sh --keep-data   # same, but keep the volumes

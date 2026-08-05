@@ -33,3 +33,58 @@ jobs:
       - name: Run pytest
         working-directory: backend
         run: pytest -v
+
+  schema-identity:
+    name: fresh init == baseline + upgrade
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build db image
+        run: docker build -t sill-db backend
+
+      - name: Boot fresh container (baked baseline + migrations + stamp)
+        run: |
+          docker run -d --name fresh \
+            -e POSTGRES_USER=sill -e POSTGRES_PASSWORD=sill -e POSTGRES_DB=sill sill-db
+
+      - name: Boot baseline-only container (simulated v0.1.0)
+        run: |
+          mkdir -p /tmp/base-init && cp backend/schema.sql /tmp/base-init/init.sql
+          docker run -d --name base \
+            -e POSTGRES_USER=sill -e POSTGRES_PASSWORD=sill -e POSTGRES_DB=sill \
+            -v /tmp/base-init:/docker-entrypoint-initdb.d sill-db
+
+      - name: Wait for init to complete on both databases
+        run: |
+          # Wait for the entrypoint's "init process complete" line, NOT pg_isready:
+          # 000_schema.sql's seed block stalls ~150s retrying the compose-only
+          # embeddings host, and pg_isready answers the temp init server mid-run.
+          # On timeout: name the container and dump its logs (agent-legible failure).
+          for c in fresh base; do
+            ok=0
+            for i in $(seq 1 140); do
+              docker logs "$c" 2>&1 | grep -q "PostgreSQL init process complete" && { ok=1; break; }
+              sleep 3
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::container '$c' never logged init completion within 420s — its init logs follow; look for a failed or stalled init script"
+              docker logs "$c" 2>&1 | tail -60
+              exit 1
+            fi
+            # Brief retry: the real server starts a moment after the temp one stops.
+            for i in 1 2 3 4 5; do
+              docker exec "$c" pg_isready -U sill -d sill && break || sleep 2
+            done
+            docker exec "$c" pg_isready -U sill -d sill
+          done
+
+      - name: Upgrade the baseline container via upgrade.sh
+        run: SILL_DB_CONTAINER=base ./upgrade.sh --no-verify
+
+      - name: Diff schema dumps
+        run: |
+          docker exec fresh pg_dump -U sill -d sill --schema-only --no-owner --no-privileges > /tmp/fresh.sql
+          docker exec base  pg_dump -U sill -d sill --schema-only --no-owner --no-privileges > /tmp/upgraded.sql
+          diff /tmp/fresh.sql /tmp/upgraded.sql
+          echo "schemas identical"
