@@ -16,6 +16,36 @@ set -euo pipefail
 
 SILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="$SILL_DIR/backend/docker-compose.yml"
+
+# Read backend/.env the way `docker compose` does, so every check in this
+# file resolves the same install the compose checks do. Without this, check 1
+# (which runs from backend/, so compose loads .env) and check 3 (a bare
+# `docker exec "$SILL_DB_CONTAINER"`) read two different configurations: an
+# operator who follows this repo's own advice to "set SILL_DB_CONTAINER in
+# backend/.env if you need two stacks side by side" gets a green check 1 and
+# a check 3 that queries whatever container happens to be named `sill_db` —
+# in the worst case, a different Sill's database, reported as a pass.
+# Precedence matches compose: an already-exported shell variable wins, .env
+# fills in the rest.
+load_env_file() {
+  local f="$SILL_DIR/backend/.env" line key val
+  [[ -f "$f" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    key="${key//[[:space:]]/}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key+x}" ]] && continue
+    val="${val#\"}"; val="${val%\"}"
+    val="${val#\'}"; val="${val%\'}"
+    export "$key=$val"
+  done < "$f"
+}
+load_env_file
+
 CONTAINER="${SILL_DB_CONTAINER:-sill_db}"
 DB_USER="${POSTGRES_USER:-sill}"
 DB_NAME="${POSTGRES_DB:-sill}"
@@ -125,7 +155,10 @@ if python3 -c "import pytest" >/dev/null 2>&1; then
     fail "adapter conformance suite failed — see pytest output above, and docs/adapters.md"
   fi
 else
-  note "pytest not on PATH (dev-only extra: pip install -e backend[dev] for the full four-slot suite) — running a direct capture-slot check instead"
+  note "pytest not importable by this python3 (dev-only extra) — running a direct capture-slot check instead."
+  note "For the full four-slot suite, install it into the interpreter that has the backend:"
+  note "  SILL_PYTHON=\"\$(ls \"\${PIPX_HOME:-\$HOME/.local/pipx}/venvs/sill-memory/bin/python\" 2>/dev/null || ls \"\$HOME/.local/share/sill-venv/bin/python\")\""
+  note "  \"\$SILL_PYTHON\" -m pip install -e backend[dev]"
   if python3 - "$SILL_DIR" <<'PY'
 import importlib.util
 import sys

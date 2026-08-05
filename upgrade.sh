@@ -55,6 +55,31 @@ set -euo pipefail
 SILL_DIR="$(cd "$(dirname "$0")" && pwd)"
 MIGRATIONS_DIR="$SILL_DIR/backend/migrations"
 BACKUP_DIR="$SILL_DIR/backups"
+
+# Same reasoning as verify.sh's copy: an operator who set SILL_DB_CONTAINER /
+# POSTGRES_USER / POSTGRES_DB in backend/.env (the documented way to run two
+# stacks side by side) must not have this script back up and migrate a
+# different install's database. Compose precedence: exported shell variable
+# wins, .env fills in the rest.
+load_env_file() {
+  local f="$SILL_DIR/backend/.env" line key val
+  [[ -f "$f" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
+    [[ "$line" == *=* ]] || continue
+    key="${line%%=*}"
+    val="${line#*=}"
+    key="${key//[[:space:]]/}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key+x}" ]] && continue
+    val="${val#\"}"; val="${val%\"}"
+    val="${val#\'}"; val="${val%\'}"
+    export "$key=$val"
+  done < "$f"
+}
+load_env_file
+
 CONTAINER="${SILL_DB_CONTAINER:-sill_db}"
 DB_USER="${POSTGRES_USER:-sill}"
 DB_NAME="${POSTGRES_DB:-sill}"

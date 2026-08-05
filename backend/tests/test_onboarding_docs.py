@@ -61,8 +61,33 @@ HEXY = re.compile(r"\b[0-9a-f]{8}\b")
 EXTERNAL_BINARIES = {
     "cat", "cd", "chmod", "claude", "codex", "cp", "date", "diff", "docker",
     "echo", "find", "grep", "head", "launchctl", "ls", "mkdir", "mv",
-    "printf", "python3", "python3.10", "rm", "systemctl", "tail", "wc",
+    "printf", "python3", "rm", "systemctl", "tail", "wc",
 }
+
+# Docs the version-pinned-interpreter guard below covers. Wider than
+# PHASE_DOCS: docs/identity.md carried the same defect and is reachable from
+# the runbook, so the guard has to see it too.
+INTERPRETER_DOCS = [
+    "README.md",
+    "docs/identity.md",
+    "docs/concepts.md",
+    "docs/beats.md",
+    "docs/adapters.md",
+    "docs/hooks.md",
+    "docs/extending.md",
+    "scheduling/README.md",
+    *PHASE_DOCS,
+]
+
+# `python3.10` is not a command that exists on a machine whose Python is 3.11,
+# 3.12, or 3.13 — which is every machine this ships to that isn't this one.
+# Eight invocations across three docs shipped that way through v0.1.0 and the
+# whole v0.2 build, because the development machine happened to have a
+# `python3.10` on PATH. The clean-machine acceptance rehearsal
+# (docs/RELEASE-REHEARSAL.md) hit `command not found: python3.10` on the first
+# one it ran. install.sh and verify.sh have always said `python3`; the docs
+# must too.
+VERSION_PINNED_PYTHON = re.compile(r"\bpython3\.\d+")
 
 # Declared in backend/pyproject.toml's [project.scripts]; installed onto the
 # operator's PATH, so present in the tree as entry points rather than files.
@@ -361,3 +386,27 @@ def test_every_fenced_command_names_a_real_script_or_binary(rel):
                     assert (ROOT / tok).exists(), (
                         f"{rel}: command names '{tok}', which does not exist — line: {line}"
                     )
+
+
+# --- clean-machine interpreter guard -----------------------------------------
+
+
+@pytest.mark.parametrize("rel", INTERPRETER_DOCS)
+def test_no_doc_invokes_a_version_pinned_python(rel):
+    """No shipped doc may tell an operator to run `python3.N`.
+
+    The failure this prevents is not cosmetic: the command does not exist, so
+    the step stops with `command not found` and the operator has no way to
+    know which interpreter was meant. Where a doc needs the interpreter that
+    has the backend installed, it resolves it the way install.sh and
+    scheduling/README.md do, rather than guessing a minor version.
+    """
+    path = ROOT / rel
+    if not path.is_file():
+        pytest.skip(f"{rel} not present")
+    hits = [
+        f"{n}: {line.strip()}"
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if VERSION_PINNED_PYTHON.search(line)
+    ]
+    assert not hits, f"{rel} pins a python minor version:\n  " + "\n  ".join(hits)

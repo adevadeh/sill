@@ -66,11 +66,11 @@ instead: `--projects=-Users-alex-code-orrery`. Verify both for yourself:
 ```bash
 cd backend
 # space form: fails, as documented above
-python3.10 -m scripts.backfill_scan run --projects -Users-alex-code-orrery --confirm
+python3 -m scripts.backfill_scan run --projects -Users-alex-code-orrery --confirm
 # -> sill backfill run: error: argument --projects: expected one argument
 
 # '=' form: works
-python3.10 -m scripts.backfill_scan run --home /some/fixture --projects=-Users-alex-code-orrery --confirm
+python3 -m scripts.backfill_scan run --home /some/fixture --projects=-Users-alex-code-orrery --confirm
 ```
 
 ## Commands
@@ -225,7 +225,7 @@ To remove every backfill archive ever produced, remove the parent
 directory instead:
 
 ```bash
-rm -rf "$(cd backend && python3.10 -c 'from scripts.identity_card import default_state_dir; print(default_state_dir())')/backfill"
+rm -rf "$(cd backend && python3 -c 'from scripts.identity_card import default_state_dir; print(default_state_dir())')/backfill"
 ```
 
 ## Verifying this yourself
@@ -240,13 +240,13 @@ mkdir -p "$DEMO/home/.claude/projects/-demo-project"
 echo '{"type":"user","message":{"role":"user","content":"hi"}}' \
   > "$DEMO/home/.claude/projects/-demo-project/session.jsonl"
 
-SILL_STATE_DIR="$DEMO/state" python3.10 -m scripts.backfill_scan plan --home "$DEMO/home"
+SILL_STATE_DIR="$DEMO/state" python3 -m scripts.backfill_scan plan --home "$DEMO/home"
 # -> lists -demo-project, 1 file; nothing under $DEMO/state yet — it was
 #    never created, not merely left empty (note $DEMO/state is NOT among
 #    the directories the mkdir -p above creates):
 ls "$DEMO/state" 2>&1   # -> ls: .../state: No such file or directory
 
-SILL_STATE_DIR="$DEMO/state" python3.10 -m scripts.backfill_scan run --home "$DEMO/home" --confirm
+SILL_STATE_DIR="$DEMO/state" python3 -m scripts.backfill_scan run --home "$DEMO/home" --confirm
 find "$DEMO/state/backfill" -type f   # -> the copy + manifest.json
 
 rm -rf "$DEMO"   # the fixture tree, and everything backfill wrote, gone

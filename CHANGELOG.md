@@ -147,6 +147,35 @@ All notable changes to Sill are recorded here. Format loosely follows
 
 ### Fixed
 
+**Found by the clean-machine acceptance rehearsal** — full transcript,
+including what it could not verify, in `docs/RELEASE-REHEARSAL.md`:
+
+- **The MCP server did not start on a fresh install.** `mcp>=1.0.0` resolved
+  to mcp 2.x, which removed the `Server.list_tools()` API the server registers
+  through; it died at startup with `'Server' object has no attribute
+  'list_tools'` while `sill-mcp --help` — and therefore `verify.sh` check 2 —
+  still exited 0. Now pinned `mcp>=1.0.0,<2`.
+- **`install.sh` registered the MCP server where Claude Code does not look.**
+  Step 7 wrote `~/.claude/.mcp.json`; the user-scope registry is
+  `~/.claude.json`, so `claude mcp list` reported no servers after a
+  successful install. Step 7 now runs `claude mcp add --scope user` when that
+  CLI is present and merges into `~/.claude.json` otherwise. The Codex half
+  was correct all along.
+- **`verify.sh` and `upgrade.sh` ignored `backend/.env`.** Their Compose checks
+  honored it (they run from `backend/`) while their `docker exec` checks read
+  `SILL_DB_CONTAINER` from the process environment — so an install that
+  followed this repo's own side-by-side advice had its database checks aimed
+  at whatever container was named `sill_db`. Both now load `backend/.env` with
+  Compose's precedence (an exported variable still wins).
+- Onboarding corrections the rehearsal forced, each re-verified by re-running
+  its phase: eight `python3.10` invocations that do not exist on a clean
+  machine; a phase-4 step that deleted phase 2's hook wiring; a permission
+  check pinned to `--setting-sources project` when the file it writes is the
+  `local` source; a fault drill whose only account of silence omitted the
+  cause that actually fired; `install.sh`'s 600 s embeddings wait against a
+  measured 903 s first boot; the `~300MB` model figure (measured: 1.2 GB); and
+  a stale `v0.1.0` status line.
+
 - `get_embedding` no longer fails on content containing literal backslashes
   (encoding-safe `convert_to` replaces the escape-interpreting `::bytea` cast).
 - Access telemetry decoupled from importance (removed the compounding

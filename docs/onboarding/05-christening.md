@@ -163,9 +163,15 @@ sill notice "<what was worth keeping>" --speaker <name> \
 3. The store finds the placeholder and writes the receipt itself:
 
 ```text
-Stored: <id> [2 tags] [<name>/assertive]
+Stored: <id> [2 tags] [<name>/untagged]
 Receipt written by the store into journal/reflector-001.md (line 5)
 ```
+
+`untagged` is the illocutionary force, and it is what you get when you do not
+pass `--force`. Adding `--force assertive` (or `commissive`, `declaration`,
+`directive`, `expressive`) puts that word there instead. Untagged is a fine
+default for a first mint; it means nobody has said yet what kind of act this
+memory is, which is different from claiming it is a truth-scored assertion.
 
 4. **The instance verifies the slot changed** — reopens the file and
    confirms the placeholder is gone and a real receipt is in its place:

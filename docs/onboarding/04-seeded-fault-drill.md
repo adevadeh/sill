@@ -80,16 +80,36 @@ Silence is *allow*, and it has two causes. The id exists in the store, or
 database that is down must not block someone's journal write — so an
 unreachable store produces exactly the same silence as a clean receipt.
 
-Which means: if the refusal above did not print, your store is probably
-down, and you have learned that the guard was never protecting anything.
-Check it before moving on:
+Which means: if the refusal above did not print, the guard was not
+protecting anything, and you have just learned that for free. Do not
+proceed on silence.
+
+"Could not be reached" is broader than "the stack is down", so
+`docker compose ps` is the second thing to check, not the first. The guard
+does not hold a database connection; it shells out to
+`docker exec <container> psql` using three environment variables of its own,
+and any of them being wrong looks exactly like a healthy stack plus a silent
+guard. Run the guard's own query yourself — this is the same command it runs:
+
+```bash
+docker exec "${SILL_DB_CONTAINER:-sill_db}" \
+  psql -U "${SILL_DB_USER:-sill}" -d "${SILL_DB_NAME:-sill}" \
+  -tAc "SELECT count(*) FROM memories"
+```
+
+A number means the guard can see your store, and silence from the refusal
+payload would then be a real defect worth reporting. An error means you have
+found the cause: if you set `SILL_DB_CONTAINER` in `backend/.env` (the
+side-by-side install case), the guard does not read that file — export the
+three variables in the shell you run beats from, and in the scheduler's
+environment too. Only then is the drill below meaningful.
 
 ```bash
 docker compose -f backend/docker-compose.yml ps
 ```
 
-Run the refusal payload again once the store is healthy. Do not proceed on
-silence.
+Run the refusal payload again once the query above answers. Do not proceed
+on silence.
 
 ## The same drill inside a beat
 

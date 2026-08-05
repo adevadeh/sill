@@ -166,10 +166,13 @@ In practice: pick your embedding model before first install and
 don't change it. If you do change it, `./reset.sh` is the safer path
 than hand-editing.
 
-The default model is small (~300MB), CPU-friendly, and good enough for
-the kinds of recall sill is doing. If you want to swap in a heavier
-model later, do it on a fresh install in a separate `SILL_DB_CONTAINER`
-and migrate by exporting/re-importing memories.
+The default model is small by current standards (300M parameters — ~1.2 GB
+of float32 weights on disk, not the ~300MB the name suggests),
+CPU-friendly, and good enough for the kinds of recall sill is doing. If
+you want to swap in a heavier model later, do it on a fresh install in its
+own stack — see the README's "Run a second Sill side by side", which takes
+more than `SILL_DB_CONTAINER` alone — and migrate by exporting and
+re-importing memories.
 
 ---
 

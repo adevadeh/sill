@@ -9,7 +9,9 @@ Built for the case where you run Claude Code (or Codex) locally and want
 the model to remember decisions, methodology, and prior conversations
 across sessions — without paying a SaaS for it.
 
-> Status: v0.1.0 — initial extraction from the agi-memory research project.
+> Status: v0.2.0 — see `CHANGELOG.md` for what changed since the v0.1.0
+> extraction, and `docs/RELEASE-REHEARSAL.md` for what a clean-machine
+> install of this version was and was not observed to do.
 
 ---
 
@@ -30,8 +32,10 @@ see, in order:
 4. wait up to 120s for db + embeddings healthchecks
 5. import the methodology seed (22 procedural/semantic memories)
 6. symlink the plugin into `~/.claude/plugins/local/sill-plugin`
-7. idempotently merge the `sill` MCP server entry into `~/.claude/.mcp.json`
-   (and `~/.codex/config.toml` if Codex is installed)
+7. register the `sill` MCP server with Claude Code — `claude mcp add --scope
+   user sill -- sill-mcp` when the `claude` CLI is present, otherwise an
+   idempotent merge into `~/.claude.json` — and with `~/.codex/config.toml`
+   if Codex is installed
 8. hook wiring, per `--scope home|project` (default `project`, see "Install
    scope" below): `project` wires one project's hooks (`--hooks-for
    /path/to/project`, optional — nothing happens without it); `home`
@@ -203,8 +207,23 @@ that trust and Codex will re-prompt for approval on its next run — see
 | Codex CLI   | *(optional)* Second supported host             | Detected automatically; if installed, `~/.codex/config.toml` is updated. |
 
 The embeddings container downloads the default model
-(`unsloth/embeddinggemma-300m`, ~300MB) on first start. Plan for a slow
-first `docker compose up`.
+(`unsloth/embeddinggemma-300m`) on first start: **~1.2 GB** of float32
+safetensors — the `300m` is parameters, not megabytes. The upstream repo
+ships no ONNX files, so the server falls back to the Candle backend and
+pulls the full weights.
+
+Plan for a slow first `docker compose up`, and know what "slow" means before
+you decide the install is broken. On an Apple Silicon Mac, where the compose
+file's `platform: linux/amd64` pin means the image runs emulated, first boot
+took **903 s** from container start to the first healthy probe — past
+`install.sh`'s 600 s wait, so step 4 gives up and exits 1. That is a timeout,
+not a failure: the download continues, and `./install.sh` is idempotent.
+Either wait for `docker compose -f backend/docker-compose.yml ps` to show
+`embeddings` healthy and re-run it, or give it longer up front:
+
+```bash
+SILL_INSTALL_WAIT_HEALTHY_S=1800 ./install.sh
+```
 
 ---
 
@@ -260,11 +279,38 @@ The defaults work for a single-host single-user install. Common reasons
 to edit:
 
 - **Port collision**: bump `POSTGRES_PORT` if 5432 is already taken.
-- **Run multiple Sill instances**: change `SILL_DB_CONTAINER` so they
-  don't share a Postgres container name.
+- **Run a second Sill side by side**: see below — `SILL_DB_CONTAINER`
+  alone is not enough.
 - **Episodic-memory integration**: set `SILL_EPISODIC_MEMORY_PATH`
   to the path of an installed
   [episodic-memory](https://github.com/obra/superpowers-plugins) CLI.
+
+### Run a second Sill side by side
+
+`backend/docker-compose.yml` names **four** containers, binds **three**
+host ports, and takes its Compose project name (which prefixes the volume
+names) from the directory it runs in — `backend`, for every clone. A
+second stack needs all of it overridden, not just `SILL_DB_CONTAINER`,
+or `docker compose up` collides with the first stack on the very first
+container it tries to create:
+
+```bash
+# backend/.env for the second stack
+COMPOSE_PROJECT_NAME=sill-second               # volume prefix; default is "backend"
+SILL_DB_CONTAINER=sill2_db
+SILL_EMBEDDINGS_CONTAINER=sill2_embeddings
+SILL_RABBITMQ_CONTAINER=sill2_rabbitmq
+SILL_MAINTENANCE_WORKER_CONTAINER=sill2_maintenance_worker
+POSTGRES_PORT=55432                            # 5432 is taken by the first stack
+RABBITMQ_PORT=55672
+RABBITMQ_MANAGEMENT_PORT=45672                 # must be <= 65535
+```
+
+`verify.sh` and `upgrade.sh` read `backend/.env` themselves, so they act
+on the stack that file describes; an exported shell variable still wins,
+matching Compose's own precedence. (Before v0.2.0 they did not, and a
+non-default `SILL_DB_CONTAINER` sent `verify.sh`'s database checks at
+whatever container happened to be named `sill_db`.)
 
 Embedding model and dimension are **locked at install time** — changing
 them later requires a schema rebuild. See `docs/concepts.md`.

@@ -16,7 +16,13 @@ dependencies = [
   "asyncpg>=0.29.0",
   "psycopg2-binary>=2.9.9",
   "pgvector>=0.2.0",
-  "mcp>=1.0.0",
+  # Upper bound is load-bearing, not caution: sill_mcp_server.py registers its
+  # tools through `Server.list_tools()`, an API mcp 2.x removed. An unpinned
+  # `mcp>=1.0.0` resolves to 2.x on any fresh install, and the server then dies
+  # at startup with "'Server' object has no attribute 'list_tools'" while
+  # `sill-mcp --help` still exits 0. Found by the v0.2.0 clean-machine
+  # acceptance rehearsal — see docs/RELEASE-REHEARSAL.md.
+  "mcp>=1.0.0,<2",
   "python-dotenv>=1.0.0",
   "requests>=2.31.0",
   "httpx>=0.25.0",

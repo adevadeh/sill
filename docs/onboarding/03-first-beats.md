@@ -38,10 +38,19 @@ So put one or two real questions where the voices will find them while
 orienting — in `notes/` for the analyst, in `journal/` for the reflector, or
 in the `kickoff` line of `beats.json` if you want to be direct about it.
 Take them from your charter if you have already drafted it, or from whatever
-you actually want to know: something checkable for the analyst ("does recall
-return anything useful for the last three things I worked on?"), something
+you actually want to know: something checkable for the analyst, something
 open for the reflector. A question the beat can fail at is better than a
 theme it can only elaborate.
+
+Check the question against the beat's tools before you seed it. A first beat
+can shell out only to what phase 4's allow-list permits, and it reaches
+memory through the `sill` MCP server rather than the CLI — there is no `sill
+recall` subcommand. "Does recall return anything useful for the last three
+things I worked on?" is a good question and a bad *first* one: a beat with
+the mint path granted and no MCP connection answers it by explaining that it
+cannot, which is honest and not what you wanted to learn. Ask the first
+analyst beat something it can reach: what is in the store already, what the
+identity card says, what the last transcript actually contains.
 
 ## Run it by hand
 
@@ -105,7 +114,12 @@ The transcript's header is written by the worker, not the beat:
 # Timestamp: 2026-08-05T09:19:07.312960
 # Duration: 0.3s
 # Exit code: 0
+# Model: claude-opus-4-8 (best-effort mtime match on session transcript)
 ```
+
+The `# Model:` line is best-effort and says so: the worker matches the child's
+session transcript by modification time, which is a guess a busy machine can
+get wrong. Treat it as a hint, unlike `# Spawned:`, which is a receipt.
 
 The spawn clock is stamped by the parent process before the child gets
 control, so nothing the beat does afterward can change it. A beat's own

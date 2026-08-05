@@ -8,8 +8,9 @@
 #   4.  Wait for db + embeddings to become healthy (120s timeout).
 #   5.  Import the methodology seed (unless --no-seed).
 #   6.  Symlink the plugin into ~/.claude/plugins/local/sill-plugin.
-#   7.  Idempotently merge the MCP server entry into ~/.claude/.mcp.json
-#       (and ~/.codex/config.toml if Codex is installed).
+#   7.  Idempotently register the 'sill' MCP server with Claude Code
+#       (`claude mcp add --scope user`, falling back to a direct merge into
+#       ~/.claude.json) and with ~/.codex/config.toml if Codex is installed.
 #   8.  Hook wiring, per --scope (default project):
 #         project — --hooks-for <path> writes idempotent hook configs into
 #                   that project's .claude/settings.local.json and
@@ -251,13 +252,35 @@ step_plugin_symlink() {
 }
 
 # --- step 7: MCP wiring -------------------------------------------------------
+# Claude Code's user-scope MCP registry is ~/.claude.json, NOT ~/.claude/.mcp.json.
+# Through v0.1.0 this step wrote the latter, which Claude Code never reads: the
+# installer reported success, and `claude mcp list` then said "No MCP servers
+# configured" with no way to tell from either output that the entry had gone
+# somewhere inert. Found by the v0.2.0 clean-machine acceptance rehearsal
+# (docs/RELEASE-REHEARSAL.md). Preferred path is now the `claude` CLI itself, so
+# the file format stays Claude Code's business rather than this script's; the
+# direct merge below is the fallback for a machine where `claude` isn't on PATH.
 step_mcp_wiring() {
   say "Step 7/10: idempotently wire 'sill' MCP server"
-  local claude_mcp="$HOME/.claude/.mcp.json"
+  local claude_mcp="$HOME/.claude.json"
   if (( DRY_RUN )); then
-    note "DRY: would merge mcpServers.sill = {command: 'sill-mcp'} into $claude_mcp"
+    if command -v claude >/dev/null 2>&1; then
+      note "DRY: would run 'claude mcp add --scope user sill -- sill-mcp'"
+    else
+      note "DRY: would merge mcpServers.sill = {command: 'sill-mcp'} into $claude_mcp"
+    fi
+  elif command -v claude >/dev/null 2>&1; then
+    # `claude mcp add` is idempotent by its own report ("already exists"), so a
+    # re-run is safe; it writes wherever this Claude Code version keeps user
+    # scope, which is the point of delegating to it.
+    if out="$(claude mcp add --scope user sill -- sill-mcp 2>&1)"; then
+      printf '  %s\n' "$out"
+    else
+      printf '  %s\n' "$out"
+      note "  'claude mcp add' failed; add it by hand: claude mcp add --scope user sill -- sill-mcp"
+    fi
   else
-    mkdir -p "$HOME/.claude"
+    note "claude CLI not on PATH; merging directly into $claude_mcp"
     python3 - "$claude_mcp" <<'PY'
 import json, sys, pathlib
 path = pathlib.Path(sys.argv[1])
@@ -268,13 +291,13 @@ if path.exists():
     except json.JSONDecodeError:
         # Don't clobber a hand-edited file we can't parse.
         print(f"install.sh: {path} isn't valid JSON; leave it alone. Manually add:")
-        print('  "sill": {"command": "sill-mcp"}')
+        print('  "sill": {"type": "stdio", "command": "sill-mcp", "args": [], "env": {}}')
         sys.exit(0)
 servers = data.setdefault("mcpServers", {})
 if "sill" in servers:
     print(f"  mcpServers.sill already present in {path}; leaving as-is")
 else:
-    servers["sill"] = {"command": "sill-mcp"}
+    servers["sill"] = {"type": "stdio", "command": "sill-mcp", "args": [], "env": {}}
     path.write_text(json.dumps(data, indent=2) + "\n")
     print(f"  added mcpServers.sill -> {path}")
 PY

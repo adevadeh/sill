@@ -29,7 +29,7 @@ able to erase who an instance is along with everything else it wiped.
 Confirm the default for yourself:
 
 ```bash
-cd backend && python3.10 -c "from scripts import identity_card as ic; print(ic.default_state_dir())"
+cd backend && python3 -c "from scripts import identity_card as ic; print(ic.default_state_dir())"
 # -> ~/.local/state/sill  (or $XDG_STATE_HOME/sill if you have that set)
 ```
 
@@ -179,7 +179,7 @@ anything that wants to load it as data (e.g. a standing prompt template
 that wants to interpolate `name` and `engine` at session start):
 
 ```bash
-cat "$(cd backend && python3.10 -c 'from scripts import identity_card as ic; print(ic.identity_path())')"
+cat "$(cd backend && python3 -c 'from scripts import identity_card as ic; print(ic.identity_path())')"
 ```
 
 ```json
