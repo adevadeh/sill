@@ -245,6 +245,25 @@ To suppress the focus-update side effect, leave
 
 ## Env-var cheat sheet
 
+The harness-adapter work (`plugin/hooks/_harness.py`, the Codex matcher
+fixes, the four-slot contract in `docs/adapters.md`) introduces **no new
+env vars** — harness detection is automatic (`_harness.detect()`, keyed on
+Codex's `turn_id`; see `docs/adapters.md`'s normalization vocabulary), not
+configured. The one new flag from that work, `--scope home|project`, is a
+CLI flag to `install.sh`/`upgrade.sh`, not an environment variable — see
+"Install scope" above. Confirm every `SILL_*` name actually read via
+`os.environ`/`os.getenv` in this codebase yourself:
+
+```bash
+grep -rhoE "os\.environ(\.get)?\(['\"]SILL_[A-Z_]+|os\.getenv\(['\"]SILL_[A-Z_]+" \
+  plugin/ backend/*.py backend/scripts/*.py | grep -oE "SILL_[A-Z_]+" | sort -u
+```
+
+Every name that command prints appears somewhere in this cheat sheet,
+with two pre-existing exceptions unrelated to this plan — `SILL_DB_HOST`
+and `SILL_DB_PORT`, read only by `backend/scripts/seed_import.py` as
+fallbacks tried before `POSTGRES_HOST`/`POSTGRES_PORT`.
+
 ### Database connection
 
 | Var                  | Default        | Used by |

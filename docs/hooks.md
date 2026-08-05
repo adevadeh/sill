@@ -57,6 +57,62 @@ grep -rn "agi_user\|agi_db" plugin/ backend/*.py backend/scripts/*.py
 
 ---
 
+## Harness support
+
+One template, `plugin/codex.hooks.json.template`, renders to *both*
+`.codex/hooks.json` and the `hooks` block merged into
+`.claude/settings.local.json` — confirm the single source yourself:
+
+```bash
+grep -n "template" install.sh | grep -E "_render_codex_hooks|_merge_claude_hooks"
+# -> both functions take the same $template argument, sourced from
+#    plugin/codex.hooks.json.template
+```
+
+So every hook in the default template is **registered** on both harnesses;
+whether it does something useful there is a separate question, answered
+per hook below. "Harness-normalized" means the hook was rewired through
+`plugin/hooks/_harness.py` (the vocabulary documented in `docs/adapters.md`)
+instead of string-matching a Claude-only tool name:
+
+```bash
+grep -l "_harness" plugin/hooks/*.py
+# -> attribution-check.py, shell-idiom-guard.py, state-language-check.py,
+#    stored-slot-guard.py, tool-type-witness.py, track-reuse.py
+```
+
+| Hook | Event | Default-wired | Harnesses |
+|---|---|:---:|---|
+| `spontaneous-recall` | UserPromptSubmit | yes | Claude Code + Codex. No harness-specific code needed — reads `prompt`, a field neither harness's payload is known to diverge on (the *inject* slot in `docs/adapters.md`; that compatibility is inferred, not independently confirmed against a live Codex sample). |
+| `track-reuse` | Stop | yes | Claude Code + Codex. Harness-normalized — `_harness.join_mcp_name` fixes the unseparated Codex transcript join (`mcp__sillrecall_batch` → `mcp__sill__recall_batch`). |
+| `attribution-check` | PreToolUse | yes | Claude Code + Codex. Harness-normalized (F2 shell/MCP branch); F1 (beat-citation check) is dormant on a fresh install regardless of harness. |
+| `state-language-check` | PreToolUse | yes | Claude Code + Codex. Harness-normalized; also fixes a real bug where the `apply_patch` branch read `tool_input["command"]` (shell's key) instead of `"input"` (the patch body's actual key) — it never extracted anything on Codex even though `apply_patch` was already in its matcher. |
+| `shell-idiom-guard` | PreToolUse | yes | Claude Code + Codex. Harness-normalized — this is the guard the previous release's Codex matcher gap disabled there entirely (it matched `tool_name == "Bash"` only). |
+| `stored-slot-guard` | PreToolUse | yes | Claude Code + Codex. Harness-normalized; a multi-file `apply_patch` is judged file-by-file via `written_files`, not just its first file. |
+| `tool-type-witness` | PreToolUse | yes | Claude Code + Codex. Harness-normalized; same multi-file, file-by-file fix as `stored-slot-guard`. |
+| `response-patterns` | Stop | yes | Claude Code + Codex. Reads Codex's `last_assistant_message` directly when present; falls back to walking `transcript_path` for Claude. Not routed through `_harness.py` — this branching predates it and covers the same ground a different way. |
+| `clear-handoff` | SessionStart | yes | Registered on both (the shared template wires it into both configs) but **functionally Claude Code only** — it parses Claude's transcript JSONL shape; a Codex `SessionStart` payload matches nothing here and the hook silently no-ops, which is the documented, intended degrade (see its own section below). |
+| `track-verification` | PostToolUse | no | Claude Code + Codex, if wired. Marks verification for *any* non-empty `tool_name` — there's no allowlist to miss a Codex-only name. |
+| `check-corrections` | UserPromptSubmit | no | Claude Code + Codex, if wired. Reads `prompt` only, the same harness-agnostic field `spontaneous-recall` relies on. |
+| `goodnight-checkpoint` | UserPromptSubmit | no | Claude Code + Codex, if wired. Reads `prompt`, falling back to `message`. |
+| `precompact-snapshot` | PreCompact | no | Claude Code in practice. `PreCompact` exists on Codex too (see `docs/adapters.md`'s ground truth), but this hook ignores its stdin payload entirely and writes to a Claude-specific convention (`<project>/.claude/rules/...generated.md`, meant to be `@`-imported from a Claude Code `CLAUDE.md`); never exercised against a real Codex payload. |
+| `check-agreement` | Stop | no | **Neither harness correctly, as shipped.** `get_response_text()` reads `data["transcript"]`/`["message"]`/`["response"]` — none of which is Claude Code's real Stop field (`transcript_path`, the field every other Stop hook in this suite reads) or Codex's (`last_assistant_message`). A real Stop payload on either harness falls through to `""`. Pre-existing, not touched by this plan; the hook also isn't in the default template. |
+
+Confirm default-template membership yourself:
+
+```bash
+grep -oE "hooks/[a-zA-Z-]+\.py" plugin/codex.hooks.json.template | sort -u
+# -> attribution-check.py, clear-handoff.py, response-patterns.py,
+#    shell-idiom-guard.py, spontaneous-recall.py, state-language-check.py,
+#    stored-slot-guard.py, tool-type-witness.py, track-reuse.py  (9 of 14)
+```
+
+See `docs/adapters.md` for the four-slot contract these harness claims are
+tested against, the full tool-name/event/payload divergence table, and what
+the conformance suite does and doesn't prove.
+
+---
+
 ## spontaneous-recall
 
 **What it does:** On every genuine user prompt, queries sill (via

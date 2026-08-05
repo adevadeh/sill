@@ -82,6 +82,34 @@ All notable changes to Sill are recorded here. Format loosely follows
   scheduling section on purpose — covering the failure mode where a
   headless agent CLI with no tool permissions denies every call and exits
   0, and how to verify a real beat before scheduling any.
+- **Harness normalization** — `plugin/hooks/_harness.py`: one vocabulary
+  (`detect`, `tool_kind`, `mcp_tool_name`, `join_mcp_name`, `shell_command`,
+  `written_path`/`written_text`/`written_files`, `assistant_text`,
+  `iter_transcript_tool_uses`) that every hook now asks instead of
+  string-matching a harness-specific tool name. Every function is total —
+  no input crashes it, including a non-dict payload or a garbage transcript
+  path.
+- **Four-slot adapter contract** — `docs/adapters.md` documents what
+  "supports a harness" means (inject/mint/capture/track), the Claude Code /
+  Codex tool-name/event/payload divergence table, the two Codex behaviors
+  that aren't guessable (SHA-256 hook-command pinning in `config.toml`;
+  fail-closed `PermissionRequest` reserved fields), and a runbook for
+  adding a third harness. `backend/tests/test_adapter_conformance.py`
+  proves each slot against both harnesses' real payload/transcript shapes
+  (fixtures under `backend/tests/fixtures/`), extending — not duplicating —
+  `test_notice.py`'s mint-argv proof.
+- **Install scope** — `./install.sh --scope home|project` (default
+  `project`, unchanged behavior): `project` keeps today's per-project
+  `--hooks-for` wiring; `home` registers hooks user-scope
+  (`~/.claude/settings.json`, `~/.codex/hooks.json`) plus a new ambient
+  instructions file (`plugin/claude.home.md.template` → `~/.claude/CLAUDE.md`,
+  merged in idempotently) so every session in every directory carries the
+  Sill background. The two scopes are additive, not exclusive. An invalid
+  `--scope` exits non-zero naming the valid values.
+- **`upgrade.sh --hooks-for`** — re-renders and diffs a project's Codex
+  hook wiring independently of any database step (`--hooks-only` skips
+  docker/db entirely); a stale `.codex/hooks.json` always shows its diff
+  and is left untouched unless `--force-hooks` is also passed.
 
 ### Fixed
 
@@ -91,6 +119,19 @@ All notable changes to Sill are recorded here. Format loosely follows
   importance-on-access trigger path; `touch_memory_access` is pure telemetry).
 - v0.1.0's insight auto-store path was inert (the CLI had no `notice`
   subcommand); now wired and covered by a contract test.
+- Three guards never fired on Codex. They matched Claude-only tool names
+  (`Bash`, `Write`, `Edit`) that Codex does not emit — it emits `exec`,
+  `exec_command`, and `apply_patch`. Codex was documented as a supported
+  host while `shell-idiom-guard`, `tool-type-witness`, and
+  `stored-slot-guard` were inert there, and `state-language-check`'s
+  `apply_patch` branch read the wrong input key so it never worked either.
+- `track-reuse` joined Codex transcript MCP names without the separator
+  (`mcp__sillrecall_batch`), working only because a downstream filter used
+  a substring test.
+- A multi-file `apply_patch` was inspected only for its first file, so
+  content in later files passed guards unexamined.
+- `upgrade.sh` had no Codex path, so upgraded installs silently kept the
+  old hook set on that harness.
 
 ### Changed
 
@@ -103,6 +144,10 @@ All notable changes to Sill are recorded here. Format loosely follows
 - Internal `.history/` scratch migrations from the v0.1.0 extraction
   (house-internal drafts; never executed at runtime). The shipped image now
   contains only the baseline schema and the numbered migrations.
+- `plugin/codex.toml.template` — dead code; `install.sh` has always inlined
+  the same content as an idempotent heredoc merge instead of reading it (a
+  static template can't safely replace that merge, since
+  `~/.codex/config.toml` may pre-exist with unrelated content).
 
 ## v0.1.0 — 2026-06-03
 

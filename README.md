@@ -53,6 +53,38 @@ current, adapter conformance (the four-slot contract — see
 Restart Claude Code (and/or Codex) so the new MCP server entry is picked
 up.
 
+## Supported hosts
+
+Sill's plugin (hooks + MCP server) is built and tested against two agent
+harnesses. This table is the honest version — what actually works, not
+what's merely wired:
+
+| Harness | Hooks | MCP memory access | Notes |
+|---|---|---|---|
+| **Claude Code** | All 14 (9 wired by default, 5 opt-in — see `docs/hooks.md`) | Yes, via `~/.claude/.mcp.json` | Primary, most-exercised surface. |
+| **Codex CLI** | 8 of the 9 default-wired hooks fire and work there; `clear-handoff` registers but silently no-ops (Claude-only transcript shape, by design). The 5 opt-in hooks are outside this release's Codex rewiring and are unverified against Codex payloads. | Yes, via `~/.codex/config.toml` | Tool-name schemas were read from one CLI build (0.144.1); multiple Codex versions coexist in practice — see `docs/adapters.md` for exactly what's version-fragile. |
+| **Cursor** | No | No | Deliberately out of scope for this release (Q16.1) — the session-peer kit was not ported. |
+| **Claude desktop app** | No | No | Conversations stay server-side; there's no local hook or plugin surface to wire into. |
+| **ChatGPT app** | No | No | Same reason — server-side conversations, no local hook surface. |
+
+For the two dark surfaces above (desktop Claude, the ChatGPT app), **the
+memory store is the only cross-surface bridge**: nothing about those
+surfaces talks to Sill automatically, but a memory stored from anywhere
+(including by hand, via `sill notice`) is recallable everywhere else Sill
+is wired. Confirm there's no hidden integration code for any of the three
+unsupported surfaces shipping today:
+
+```bash
+grep -ril "chatgpt\|claude\.desktop\|desktop\.claude" plugin/ install.sh upgrade.sh backend/*.py
+grep -rn "cursor" plugin/*.json plugin/*.template
+# -> no output from either
+```
+
+v0.1.0 documented Codex as a supported host while three of its guards
+(`shell-idiom-guard`, `stored-slot-guard`, `tool-type-witness`) never
+actually fired there — see the CHANGELOG's v0.2.0 "Fixed" section and
+`docs/adapters.md` for the full defect and how the fix is tested.
+
 ## Install scope
 
 Hooks can be wired at two scopes — a real tradeoff, not a style choice:
@@ -187,9 +219,9 @@ until you turn it on.
 
 **Plugin** (`plugin/`):
 
-- 12 hooks (recall, attribution checks, response patterns, a mint-path
+- 14 hooks (recall, attribution checks, response patterns, a mint-path
   auto-store, a shell-idiom guard, `/clear` handoff, etc. — see
-  `docs/hooks.md`)
+  `docs/hooks.md`, including which harnesses each one fires on)
 - 8 generic response-pattern rule files
 - `goodnight-triggers.txt` config
 - Templates for Claude Code and Codex hook wiring
@@ -348,7 +380,11 @@ detects it on each call.
 - `docs/concepts.md` — what's in the database, memory shape rules,
   embedding dimension, recall patterns, workers, the AGE graph layer.
 - `docs/hooks.md` — one section per shipped hook (event, env vars,
-  how to disable, a canned test command).
+  how to disable, a canned test command), plus a harness-support table
+  covering which of the two supported hosts each hook fires on.
+- `docs/adapters.md` — the four-slot contract (inject/mint/capture/track)
+  that makes "supports harness X" a checkable claim, the Claude Code /
+  Codex divergence table, and how to add a third harness.
 - `docs/extending.md` — writing good memories, the quality gate,
   adding your own hooks, customizing rule files and triggers,
   env-var cheat sheet.
