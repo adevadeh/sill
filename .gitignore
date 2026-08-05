@@ -45,3 +45,9 @@ htmlcov/
 
 # upgrade.sh pre-upgrade backups
 backups/
+
+# Operator content (an operator's charter and beat journals are theirs,
+# not the software's — see docs/onboarding/05-christening.md)
+charter.md
+journal/
+notes/

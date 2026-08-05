@@ -107,8 +107,8 @@ Sill memories should fit one of two shapes:
 A verbatim quote with provenance, plus why it mattered.
 
 ```
-"Memory retrieval is in-context programming." — William, 2026-02-01,
-sill discussion. Frames recall as pathway-steering, not just lookup.
+"Memory retrieval is in-context programming." — Alice, 2024-11-03,
+design discussion. Frames recall as pathway-steering, not just lookup.
 ```
 
 Fields that make this load-bearing: the **verbatim quote**, the

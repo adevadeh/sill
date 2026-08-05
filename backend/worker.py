@@ -144,7 +144,7 @@ def main() -> int:
     p.add_argument(
         "--mode",
         choices=["maintenance", "beat"],
-        default=os.getenv("AGI_WORKER_MODE", "maintenance"),
+        default=os.getenv("SILL_WORKER_MODE", "maintenance"),
         help="Which worker to run.",
     )
     args = p.parse_args()
