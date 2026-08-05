@@ -42,8 +42,10 @@ Then:
 ./verify.sh
 ```
 
-Five smoke checks: db/embeddings healthy, `sill-mcp --help` runs, seed
-loaded (>= 22 memories), one hook parses a canned event, schema level current. Exits 0 on green.
+Six smoke checks: db/embeddings healthy, `sill-mcp --help` runs, seed
+loaded (>= 22 memories), one hook parses a canned event, schema level
+current, adapter conformance (the four-slot contract — see
+`docs/adapters.md`). Exits 0 on green.
 
 Restart Claude Code (and/or Codex) so the new MCP server entry is picked
 up.
@@ -264,7 +266,7 @@ all-or-nothing: once `.codex/hooks.json` exists, re-running
 ## Verifying, resetting, uninstalling
 
 ```bash
-./verify.sh        # five smoke checks; exits non-zero on failure
+./verify.sh        # six smoke checks; exits non-zero on failure
 ./reset.sh         # drops the postgres volume and re-seeds (asks first)
 ./uninstall.sh     # removes containers + volumes + backend + plugin symlink
 ./uninstall.sh --keep-data   # same, but keep the volumes
