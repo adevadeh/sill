@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash",
+        "matcher": "mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command",
         "hooks": [
           {
             "type": "command",
@@ -12,12 +12,45 @@
         ]
       },
       {
-        "matcher": "mcp__(agi_memory|agi-memory|sill)__(remember|remember_batch|remember_batch_raw)|Bash|apply_patch|Edit|Write",
+        "matcher": "mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|apply_patch|Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/state-language-check.py",
             "statusMessage": "Checking state-language claims"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|exec|exec_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/shell-idiom-guard.py",
+            "statusMessage": "Checking shell command for idiom traps",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/stored-slot-guard.py",
+            "statusMessage": "Checking receipt-shaped ids against the store",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/tool-type-witness.py",
+            "statusMessage": "Checking carrying-act claims",
+            "timeout": 10
           }
         ]
       }
@@ -48,6 +81,18 @@
             "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/track-reuse.py",
             "statusMessage": "Checking memory reuse",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{SILL_PYTHON}} {{SILL_PLUGIN_DIR}}/hooks/clear-handoff.py",
+            "statusMessage": "Restoring /clear handoff context",
+            "timeout": 10
           }
         ]
       }

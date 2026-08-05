@@ -35,8 +35,12 @@ AGREEMENT_PHRASES = [
 
 def log(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a") as f:
-        f.write(f"{timestamp} | {message}\n")
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} | {message}\n")
+    except Exception:
+        pass
 
 def was_verified() -> bool:
     """Check if verification happened this turn."""
@@ -49,6 +53,12 @@ def was_verified() -> bool:
 try:
     input_data = json.load(sys.stdin)
 except json.JSONDecodeError:
+    sys.exit(0)
+if not isinstance(input_data, dict):
+    # Valid JSON that isn't an object — a bare number, string, null, or
+    # bool — survives get_response_text()'s list-shaped case (its "key" in
+    # data checks are membership tests, harmless on a list) but not these:
+    # "key" in 42 / in None / in True all raise TypeError.
     sys.exit(0)
 
 def contains_agreement_phrase(text: str) -> bool:

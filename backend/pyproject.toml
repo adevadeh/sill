@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sill-memory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Sill — Postgres-backed persistent memory for AI agents (MCP + workers)."
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -16,7 +16,13 @@ dependencies = [
   "asyncpg>=0.29.0",
   "psycopg2-binary>=2.9.9",
   "pgvector>=0.2.0",
-  "mcp>=1.0.0",
+  # Upper bound is load-bearing, not caution: sill_mcp_server.py registers its
+  # tools through `Server.list_tools()`, an API mcp 2.x removed. An unpinned
+  # `mcp>=1.0.0` resolves to 2.x on any fresh install, and the server then dies
+  # at startup with "'Server' object has no attribute 'list_tools'" while
+  # `sill-mcp --help` still exits 0. Found by the v0.2.0 clean-machine
+  # acceptance rehearsal — see docs/RELEASE-REHEARSAL.md.
+  "mcp>=1.0.0,<2",
   "python-dotenv>=1.0.0",
   "requests>=2.31.0",
   "httpx>=0.25.0",
@@ -24,13 +30,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-heartbeat = [
-  "openai>=1.3.0",
-  "anthropic>=0.40.0",
-]
 dev = [
   "pytest>=7.4.3",
   "pytest-asyncio>=0.21.1",
+]
+diagnostics = [
+  "numpy>=1.24",
 ]
 
 [project.scripts]
@@ -47,6 +52,10 @@ py-modules = [
   "sill_cli",
   "sill_mcp_server",
   "worker",
+  "rabbit_bridge",
+  "beat_worker",
+  "memory_health",
+  "ingest_md_memories",
 ]
 include-package-data = false
 

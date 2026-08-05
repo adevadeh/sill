@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AGI Memory MCP Tools
+Sill Memory Tools
 
 Provides MCP-compatible tools for an LLM to query its memory system during conversation.
 These are the function definitions and handlers that allow the model to actively
@@ -303,7 +303,7 @@ class MemoryToolHandler:
             self.conn = psycopg2.connect(
                 host=self.db_config.get('host', 'localhost'),
                 port=self.db_config.get('port', 5432),
-                dbname=self.db_config.get('dbname', 'agi_memory'),
+                dbname=self.db_config.get('dbname', 'sill'),
                 user=self.db_config.get('user', 'postgres'),
                 password=self.db_config.get('password', 'password')
             )
@@ -702,7 +702,7 @@ class ApiMemoryToolHandler:
         dsn = (
             f"postgresql://{self.db_config.get('user', 'postgres')}:{self.db_config.get('password', 'password')}"
             f"@{self.db_config.get('host', 'localhost')}:{int(self.db_config.get('port', 5432))}"
-            f"/{self.db_config.get('dbname', 'agi_memory')}"
+            f"/{self.db_config.get('dbname', 'sill')}"
         )
         self.client = CognitiveMemorySync.connect(dsn, min_size=1, max_size=5)
 
@@ -912,7 +912,7 @@ class ContextEnricher:
         dsn = (
             f"postgresql://{self.db_config.get('user', 'postgres')}:{self.db_config.get('password', 'password')}"
             f"@{self.db_config.get('host', 'localhost')}:{int(self.db_config.get('port', 5432))}"
-            f"/{self.db_config.get('dbname', 'agi_memory')}"
+            f"/{self.db_config.get('dbname', 'sill')}"
         )
         self.client = CognitiveMemorySync.connect(dsn, min_size=1, max_size=5)
     
@@ -1003,7 +1003,7 @@ class MemoryFormation:
         dsn = (
             f"postgresql://{self.db_config.get('user', 'postgres')}:{self.db_config.get('password', 'password')}"
             f"@{self.db_config.get('host', 'localhost')}:{int(self.db_config.get('port', 5432))}"
-            f"/{self.db_config.get('dbname', 'agi_memory')}"
+            f"/{self.db_config.get('dbname', 'sill')}"
         )
         self.client = CognitiveMemorySync.connect(dsn, min_size=1, max_size=5)
     
@@ -1150,7 +1150,7 @@ def cross_join_query(
     conn = psycopg2.connect(
         host=db_config.get("host", "localhost"),
         port=db_config.get("port", 5432),
-        dbname=db_config.get("dbname", "agi_memory"),
+        dbname=db_config.get("dbname", "sill"),
         user=db_config.get("user", "postgres"),
         password=db_config.get("password", "password"),
     )

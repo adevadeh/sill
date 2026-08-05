@@ -87,12 +87,41 @@ order). The composition rules:
   `<project>/.codex/hooks.json`. Sill's installer merges into
   these files idempotently; adding your own entries alongside is
   safe.
-- **Globally**, in `~/.claude/settings.json`. Sill doesn't touch
-  this file.
+- **Globally**, in `~/.claude/settings.json` (and `~/.codex/hooks.json`
+  for Codex). If you ran `./install.sh --scope project` (the default),
+  Sill never touches these files — add your own hooks there freely. If
+  you ran `./install.sh --scope home`, Sill's own hooks live there too
+  (merged idempotently, same as the per-project case); your entries and
+  Sill's coexist the same way they would in a project's
+  `settings.local.json`. See the "Install scope" section below.
+
+### Install scope: `--scope home` vs `--scope project`
+
+`./install.sh`'s `--hooks-for <path>` (project scope, the default) and
+`--scope home` are two different answers to "where do Sill's hooks run,"
+not two ways of writing the same thing — the tradeoff is real in both
+directions:
+
+- **`--scope project`** (default): hooks go into one project's
+  `.claude/settings.local.json` and `.codex/hooks.json`. Narrower blast
+  radius, no cross-project mixing — but every new project needs its own
+  `--hooks-for` run, and only wired projects get recall/guards.
+- **`--scope home`**: hooks go into `~/.claude/settings.json` and
+  `~/.codex/hooks.json`, plus an ambient instructions file
+  (`~/.claude/CLAUDE.md`, from `plugin/claude.home.md.template`) so every
+  session in every directory carries the Sill background. In exchange:
+  every prompt in every project pays the recall hook's latency, and any
+  project's work can reach the one store.
+
+`--scope home` and `--hooks-for <path>` are additive, not exclusive — you
+can register home-scope hooks and also give one project its own
+project-scoped entries in the same run.
 
 **Avoiding matcher conflicts.** Sill's `PreToolUse` matchers
 target memory-storage tools and (for state-language-check)
-`Bash|apply_patch|Edit|Write`. If your hook uses a narrower or
+`Bash|exec|exec_command|apply_patch|Edit|Write` — the union of Claude's
+and Codex's tool names for the same shell/write/edit actions (see
+`_harness.py`). If your hook uses a narrower or
 unrelated matcher, there's no conflict. If you want to gate one
 of Sill's hooks off for a specific tool, the cleanest path is
 to copy the relevant entry, edit the matcher, and disable the
@@ -216,30 +245,60 @@ To suppress the focus-update side effect, leave
 
 ## Env-var cheat sheet
 
-### Database connection
-
-| Var                  | Default       | Used by |
-|----------------------|---------------|---------|
-| `SILL_DB_CONTAINER`  | `sill_db`     | `recall_lib`, `spontaneous-recall`, `precompact-snapshot`, `goodnight-checkpoint`, the install/verify scripts |
-| `SILL_DB_USER`       | varies        | `recall_lib` (`sill`), `goodnight-checkpoint` (`sill`), `spontaneous-recall` (`agi_user`), `precompact-snapshot` (`agi_user`) |
-| `SILL_DB_NAME`       | varies        | same split as above |
-| `POSTGRES_HOST`      | `localhost`   | `track-reuse` (direct psycopg2) |
-| `POSTGRES_PORT`      | `5432`        | `track-reuse` |
-| `POSTGRES_DB`        | `agi_db`      | `track-reuse` |
-| `POSTGRES_USER`      | `agi_user`    | `track-reuse` |
-| `POSTGRES_PASSWORD`  | `agi_password`| `track-reuse` |
-
-**The mismatch.** `install.sh` creates the db as `sill` / `sill`,
-but `spontaneous-recall`, `precompact-snapshot`, and `track-reuse`
-default to the upstream `agi_*` names. Until the defaults are
-unified, set this in your shell:
+The harness-adapter work (`plugin/hooks/_harness.py`, the Codex matcher
+fixes, the four-slot contract in `docs/adapters.md`) introduces **no new
+env vars** — harness detection is automatic (`_harness.detect()`, keyed on
+Codex's `turn_id`; see `docs/adapters.md`'s normalization vocabulary), not
+configured. The one new flag from that work, `--scope home|project`, is a
+CLI flag to `install.sh`/`upgrade.sh`, not an environment variable — see
+"Install scope" above. Confirm every `SILL_*` name actually read via
+`os.environ`/`os.getenv` in this codebase yourself:
 
 ```bash
-export SILL_DB_USER=sill
-export SILL_DB_NAME=sill
-export POSTGRES_DB=sill
-export POSTGRES_USER=sill
-export POSTGRES_PASSWORD=sill_password
+grep -rhoE "os\.environ(\.get)?\(['\"]SILL_[A-Z_]+|os\.getenv\(['\"]SILL_[A-Z_]+" \
+  plugin/ backend/*.py backend/scripts/*.py | grep -oE "SILL_[A-Z_]+" | sort -u
+```
+
+Every name that command prints appears somewhere in this cheat sheet,
+with two pre-existing exceptions unrelated to this plan — `SILL_DB_HOST`
+and `SILL_DB_PORT`, read only by `backend/scripts/seed_import.py` as
+fallbacks tried before `POSTGRES_HOST`/`POSTGRES_PORT`.
+
+### Database connection
+
+| Var                  | Default        | Used by |
+|----------------------|----------------|---------|
+| `SILL_DB_CONTAINER`  | `sill_db`      | `recall_lib`, `spontaneous-recall`, `precompact-snapshot`, `goodnight-checkpoint`, `backend/sill.py` (`notice`), `backend/scripts/decompose_event.py`, the install/verify scripts |
+| `SILL_DB_USER`       | `sill`         | same set as `SILL_DB_CONTAINER` |
+| `SILL_DB_NAME`       | `sill`         | same set as `SILL_DB_CONTAINER` |
+| `POSTGRES_HOST`      | `localhost`    | `track-reuse` (direct `psycopg2`, not `docker exec`) |
+| `POSTGRES_PORT`      | `5432`         | `track-reuse` |
+| `POSTGRES_DB`        | `sill`         | `track-reuse` |
+| `POSTGRES_USER`      | `sill`         | `track-reuse` |
+| `POSTGRES_PASSWORD`  | `sill_password`| `track-reuse` |
+
+Every one of these already matches what `backend/docker-compose.yml`
+and `backend/.env.example` provision by default — there is no
+mismatch to work around on a fresh install (earlier drafts of this
+doc described one; it was fixed in the hooks' own code before it was
+fixed here). Confirm for yourself:
+
+```bash
+grep -rn "agi_user\|agi_db\|agi_password\|agi_memory" plugin/ backend/*.py backend/scripts/*.py
+# -> no output
+```
+
+Only override these if you renamed the container, user, or database
+away from the shipped defaults (e.g. running a second Sill instance
+side by side):
+
+```bash
+export SILL_DB_CONTAINER=sill_db_test
+export SILL_DB_USER=sill_test
+export SILL_DB_NAME=sill_test
+export POSTGRES_DB=sill_test
+export POSTGRES_USER=sill_test
+export POSTGRES_PASSWORD=sill_test_password
 ```
 
 ### Paths
@@ -254,7 +313,64 @@ export POSTGRES_PASSWORD=sill_password
 | `SILL_RESPONSE_PATTERNS_DIR` | `<plugin>/response-patterns`           | Where the response-patterns hook reads rule files from |
 | `SILL_BEAT_SESSIONS_DIR`     | `<root>/docs/gnomon-sessions`          | Where attribution-check looks for `beat-NNN-*.md` files |
 | `SILL_RESEARCH_MANIFEST`     | `<root>/docs/research-manifest.json`   | Optional manifest read by precompact-snapshot |
-| `SILL_LOG_DIR`               | `/tmp`                                 | Where every hook writes its `.log` file |
+| `SILL_LOG_DIR`               | `/tmp`                                 | Where every hook's `.log` file lives, plus every sidecar/state file: `recall-sidecar-<session>.jsonl`, `response-patterns-last-<session>.json`, `response-patterns-data.jsonl`, `auto-stored-insights.jsonl`, `verification-state.json`, `cc-session-by-pid/` |
+
+Note `SILL_BEAT_SESSIONS_DIR` above is unrelated to the beat worker below
+despite the name — it's attribution-check's F1 check looking for
+`beat-NNN-*.md` citation targets, a different, older feature.
+
+### Beat worker (`sill-worker --mode beat`)
+
+Full field-by-field and worked-example coverage lives in `docs/beats.md`;
+this is the flat env-var reference. None of these are set by `install.sh`
+— the worker reads them fresh at import/spawn time, and the scheduling
+templates under `scheduling/` set the ones worth pinning explicitly for an
+unattended install.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `SILL_BEAT_CONFIG`           | `beats.json` at the project root                                              | Voice definitions — see `backend/beats.example.json`. |
+| `SILL_BEAT_INTERVAL_SECONDS` | `7200` (2h)                                                                    | Time between beats. |
+| `SILL_BEAT_TIMEOUT_SECONDS`  | `1800` (30min)                                                                 | Per-beat subprocess wall-clock cap. |
+| `SILL_BEAT_STATE_PATH`       | `$XDG_STATE_HOME/sill/beat-rotation.json`, else `~/.local/state/sill/beat-rotation.json` | Rotation index — **never `/tmp`**. |
+| `SILL_BEAT_LOG_PATH`         | `$SILL_LOG_DIR/beat-worker.log`                                                | The worker's own log. |
+| `SILL_BEAT_CLI`              | `claude`                                                                       | The agent CLI executable to spawn. |
+| `SILL_BEAT_WATCHDOG_SOCKET`  | unset                                                                          | Ping this socket before every spawn; log-only, unset skips the probe. |
+| `SILL_BEAT_POST_HOOK`        | unset                                                                          | Command run after a successful beat; log-only, never fails the beat. |
+| `SILL_BEAT_JOURNAL_DIRS`     | unset; **the worker sets it itself** on every beat child                      | Scope for `stored-slot-guard.py` / `tool-type-witness.py` (opt-in — unset means they check nothing) and `state-language-check.py`, where it **replaces** — not adds to — the `journals/`/`docs/` default. Consequence: with the shipped `beats.example.json`, the derived scope is `notes/:logs/analyst/:journal/:logs/reflector/`, so once a beat sets this, a beat child writing under `docs/` or `journals/` directly is *not* state-language-checked — only the derived voice directories are. Derived by `beat_worker.journal_dirs_for_voices()` from the loaded `beats.json`: every voice's `output_glob` directory plus its `transcripts` dir, colon-joined. You should not set this by hand — the worker's startup log prints the value it derived. |
+
+`SILL_DETACHED_BEAT` is also set by the worker on every beat child, but is
+documented below under the headless/interactive gate, since that's the
+hook logic that actually reads it.
+
+### Headless / interactive gate (spontaneous-recall)
+
+Read fresh on every `UserPromptSubmit`; none of these are set by
+`install.sh` — they're for the caller (a scheduler, a wrapping
+front-end) to set on the child session it spawns.
+
+| Var                   | Default | Purpose |
+|------------------------|---------|---------|
+| `SILL_DETACHED_BEAT`   | unset   | `1` = an authoritative "this session is headless" flag a scheduler sets on every child it spawns. Silences recall injection and the `[TIME]` header's clock-advance. |
+| `SILL_INTERACTIVE`     | unset   | `1` = override back to interactive even though the entrypoint looks headless (an `sdk*` `CLAUDE_CODE_ENTRYPOINT`) — for a front-end that drives `--print` on behalf of a real person. |
+| `SILL_HEADLESS_TOOL`   | unset   | `1` = explicit "be quiet" that always wins, regardless of the other two. |
+
+The gate defaults to interactive and excludes only the known-headless
+family (blacklist, not whitelist), so a front-end this project has
+never heard of is treated as a human by default. See
+`docs/hooks.md`'s spontaneous-recall section for the full precedence
+order.
+
+### Mint-path auto-store (response-patterns)
+
+| Var                    | Default                                | Purpose |
+|-------------------------|-----------------------------------------|---------|
+| `SILL_HOME_PROJECT`    | unset                                   | Names the one project where insight auto-store is **suppressed** — the project that mints deliberately, where an auto-store would only echo. Every other project is eligible. **Fail-closed**: unset means every resolvable cwd reads as home, so auto-store stays log-only everywhere until you configure this. |
+| `SILL_SPEAKER_SELF`    | `instance`                              | The `--speaker` value stamped on an auto-stored memory. Rename it once you've christened the running instance. |
+| `SILL_INSIGHT_DETECT`  | `0` (off)                               | `1` turns on the local-model insight detector. Leave off unless you have a model reachable at `SILL_OLLAMA_URL` — otherwise every Stop event pays a timeout for nothing. |
+| `SILL_CLI`             | `sill`                                  | The command the auto-store path shells out to (`$SILL_CLI notice ...`). Point it at a full path if `sill` isn't on the hook's PATH. |
+| `SILL_OLLAMA_URL`      | `http://localhost:11434/api/generate`   | Only consulted when `SILL_INSIGHT_DETECT=1`. |
+| `SILL_OLLAMA_MODEL`    | `gemma3:12b`                            | Only consulted when `SILL_INSIGHT_DETECT=1`. |
 
 ### Integrations
 
@@ -277,7 +393,6 @@ export POSTGRES_PASSWORD=sill_password
 | `SILL_EMBEDDINGS_CONTAINER`        | `sill_embeddings`          |
 | `SILL_RABBITMQ_CONTAINER`          | `sill_rabbitmq`            |
 | `SILL_MAINTENANCE_WORKER_CONTAINER`| `sill_maintenance_worker`  |
-| `SILL_HEARTBEAT_WORKER_CONTAINER`  | `sill_heartbeat_worker`    |
 
 Useful when running multiple Sill stacks on the same host.
 
@@ -286,11 +401,16 @@ Useful when running multiple Sill stacks on the same host.
 ## A note on the upstream
 
 Sill was extracted from agi-memory and still carries some upstream
-shape — the `agi_user` / `agi_db` defaults in three hooks, the
-attribution-check F1 path that only fires in the original session
-log directory, and the worldview/identity tables that most installs
-won't touch. None of this is harmful, but it's worth knowing about
-when something doesn't quite line up with what's documented here.
+shape — `attribution-check`'s F2 patterns hardcode the origin
+project's own example names rather than a portable placeholder (see
+`docs/hooks.md`'s attribution-check section for how to adapt it),
+the F1 path only fires when a `docs/gnomon-sessions/` directory
+exists, and the worldview/identity tables that most installs won't
+touch. The database-credential mismatch a previous version of this
+doc warned about here is gone — every hook has defaulted to `sill` /
+`sill` for a while now (see the "Database connection" table above).
+None of the above is harmful, but it's worth knowing about when
+something doesn't quite line up with what's documented here.
 
 The methodology pack itself, by contrast, is written to be portable.
 Twenty-two memories about inquiry, verification, recall patterns,

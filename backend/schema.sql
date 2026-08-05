@@ -2365,8 +2365,8 @@ COMMENT ON FUNCTION concept_ids_substr IS 'Broader concept match for composition
 
 -- TEMPORAL/META QUERY: Trace belief trajectory for a concept
 -- TRACE TRAJECTORY: Chronological belief evolution for a concept
--- Three-layer match (same shape as position_on, gather_pattern, find_by_concept
--- after beat 40): concept-tag fuzzy > concept-tag substr (compositional phrases)
+-- Three-layer match (same shape as position_on, gather_pattern, find_by_concept):
+-- concept-tag fuzzy > concept-tag substr (compositional phrases)
 -- > FTS fallback. Each layer excludes IDs matched by higher layers.
 CREATE OR REPLACE FUNCTION trace_trajectory(
     p_concept text,
@@ -7872,7 +7872,7 @@ $$ LANGUAGE plpgsql;
 
 -- >>> migrations/010_self_direction.sql >>>
 \set ON_ERROR_STOP off
--- Self-direction tables: enable Sili to participate in memory curation
+-- Self-direction tables: enable the agent to participate in memory curation
 -- Closes the loop: self-model can now affect what persists
 
 -- 1. Archive/forget memories (soft delete with reason tracking)
@@ -8820,10 +8820,9 @@ END $$;
 -- The trigger-function `update_memory_importance()` (no args) is a distinct
 -- overload that fires on access_count changes; it is unaffected by this fix.
 --
--- Found 2026-04-20 when main-conversation Sili attempted to down-weight
--- corpus memories after cross-model critique (see
--- docs/chorus-critique-2026-04-20.md). MCP errored with
--- "function update_memory_importance(uuid, double precision, text) does not exist".
+-- Found 2026-04-20 when an agent attempted to down-weight corpus memories
+-- after a cross-model critique pass. MCP errored with "function
+-- update_memory_importance(uuid, double precision, text) does not exist".
 
 CREATE OR REPLACE FUNCTION public.update_memory_importance(
   p_memory_id UUID,

@@ -58,17 +58,19 @@ you can ignore them for normal recall.
   `precompact-snapshot` and `goodnight-checkpoint` read/write this.
 - `goal_memory_links` — ties memories to the goal they came out of.
 
-### Maintenance / heartbeat config and state
+### Maintenance config and state
 
-- `heartbeat_config`, `maintenance_config`, `config` — knobs.
-- `heartbeat_state`, `maintenance_state` — worker state machines.
-- `heartbeat_log` — periodic synthesis output.
+- `maintenance_config`, `config` — knobs.
+- `maintenance_state` — worker state machine.
+- `heartbeat_state` — a singleton row left over from the retired
+  heartbeat worker, but still live: `rabbit_bridge.py`'s inbox poll
+  stamps its `last_user_contact` column after ingesting each RabbitMQ
+  message. Nothing else in this codebase reads or writes it.
 - `external_calls`, `outbox_messages` — for the RabbitMQ message bus.
 
 The `maintenance_worker` runs by default and handles importance decay,
-drift tracking, and other housekeeping. The `heartbeat_worker` is
-**opt-in** via the `heartbeat` Compose profile, because it needs an
-LLM provider configured.
+drift tracking, and other housekeeping. Reflective processing ships as the beat 
+worker (see `docs/beats.md`), which is off until you turn it on.
 
 ### Embedding cache
 
@@ -80,8 +82,7 @@ LLM provider configured.
 ### Clusters, episodes, and the rest
 
 - `memory_clusters`, `memory_cluster_members`, `cluster_relationships`,
-  `memory_neighborhoods` — graph-of-memories structures used by the
-  heartbeat synthesis loop.
+  `memory_neighborhoods` — graph-of-memories structures used by synthesis.
 - `episodes`, `episode_memories` — temporal groupings.
 - `memory_changes`, `importance_updates`, `boundaries`,
   `emotional_states`, `relationship_discoveries`,
@@ -92,8 +93,8 @@ LLM provider configured.
   install.
 
 If you only ever call `recall` and `remember`, you'll touch maybe
-four of these tables. The rest are there for the heartbeat /
-maintenance / research workflows to grow into.
+four of these tables. The rest are there for the maintenance and
+research workflows to grow into.
 
 ---
 
@@ -106,8 +107,8 @@ Sill memories should fit one of two shapes:
 A verbatim quote with provenance, plus why it mattered.
 
 ```
-"Memory retrieval is in-context programming." — William, 2026-02-01,
-sill discussion. Frames recall as pathway-steering, not just lookup.
+"Memory retrieval is in-context programming." — Alice, 2024-11-03,
+design discussion. Frames recall as pathway-steering, not just lookup.
 ```
 
 Fields that make this load-bearing: the **verbatim quote**, the
@@ -165,10 +166,13 @@ In practice: pick your embedding model before first install and
 don't change it. If you do change it, `./reset.sh` is the safer path
 than hand-editing.
 
-The default model is small (~300MB), CPU-friendly, and good enough for
-the kinds of recall sill is doing. If you want to swap in a heavier
-model later, do it on a fresh install in a separate `SILL_DB_CONTAINER`
-and migrate by exporting/re-importing memories.
+The default model is small by current standards (300M parameters — ~1.2 GB
+of float32 weights on disk, not the ~300MB the name suggests),
+CPU-friendly, and good enough for the kinds of recall sill is doing. If
+you want to swap in a heavier model later, do it on a fresh install in its
+own stack — see the README's "Run a second Sill side by side", which takes
+more than `SILL_DB_CONTAINER` alone — and migrate by exporting and
+re-importing memories.
 
 ---
 
@@ -227,22 +231,10 @@ and drift tracking; the loop is conservative and idempotent.
 
 Logs: `docker compose logs maintenance_worker`.
 
-### Heartbeat (opt-in)
+### Beat worker
 
-```bash
-docker compose -f backend/docker-compose.yml --profile heartbeat up -d
-```
-
-Brings up `heartbeat_worker` (`sill-worker --mode heartbeat`).
-Periodic synthesis: clusters memories, suggests new
-worldview-primitives, flags contradictions. Needs an LLM provider
-configured (the `heartbeat` extra installs `openai` and `anthropic`
-SDKs).
-
-If you're running with a local model (e.g. Gemma via Ollama), point
-the heartbeat at it with the standard OpenAI-API env vars
-(`OPENAI_API_KEY`, `OPENAI_BASE_URL`). Most installs leave heartbeat
-off entirely.
+Reflective processing ships as the beat worker (see `docs/beats.md`), which is off
+until you turn it on.
 
 ---
 

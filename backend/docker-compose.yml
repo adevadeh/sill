@@ -104,29 +104,6 @@ services:
       - private
       - public
 
-  heartbeat_worker:
-    profiles: ["heartbeat"]
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    container_name: ${SILL_HEARTBEAT_WORKER_CONTAINER:-sill_heartbeat_worker}
-    command: ["sill-worker", "--mode", "heartbeat"]
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
-      POSTGRES_DB: ${POSTGRES_DB:-sill}
-      POSTGRES_USER: ${POSTGRES_USER:-sill}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sill_password}
-      EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-unsloth/embeddinggemma-300m}
-      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-768}
-      RABBITMQ_ENABLED: "0"
-    networks:
-      - private
-      - public
-
 volumes:
   postgres_data:
   embeddings_cache:

@@ -4,17 +4,43 @@ State-language-check hook.
 
 Fires PreToolUse on memory-storage tool calls (mcp__sill__remember,
 mcp__sill__remember_batch[_raw], Bash-with-sill.py-notice) and on
-Write/Edit when the path is under journals/ or docs/. Detects borrowed
-human embodied-state language used as exit-script or unchecked state-claim.
+Write/Edit when the path is in scope. Detects borrowed human embodied-state
+language used as exit-script or unchecked state-claim.
 
-Origin: 2026-04-29 replay journal "attention is fading" — William asked
-"what does that expression even mean to you?" The phrase was bs-zombie:
-coherent text matching human end-of-session convention without referent.
-Same generator as the attribution-error pattern, hence same hook shape.
+Scope for the Write/Edit/apply_patch check: SILL_BEAT_JOURNAL_DIRS when set
+(colon-separated path fragments — the same convention stored-slot-guard.py
+and tool-type-witness.py read; beat_worker.spawn_beat() derives and exports
+it to every beat child from the loaded voice config), else journals/ and
+docs/ as the fallback default. The fallback is not vestigial: spawn_beat()
+never wraps an interactive session, so an interactive Claude Code session —
+or any install that never touches the beat worker at all — always sees the
+variable unset and gets exactly the journals/+docs/ coverage this hook has
+always had.
+
+Origin: borrowed human embodied-state language performed as exit-script
+convention — coherent text matching a human end-of-session pattern
+without a checked referent behind it. Same generator as the
+attribution-error pattern, hence the same hook shape.
 
 Non-blocking. Flags for verify-or-rephrase before storage. Logs to
 /tmp/state-language-check.log.
+
+Fires on both harnesses via _harness.tool_kind/shell_command/written_files:
+Claude's Bash normalizes with Codex's exec/exec_command to "shell" kind,
+and Claude's Write/Edit normalize with Codex's apply_patch to "write"/
+"edit" kind (apply_patch always "write", even a "*** Update File:" body —
+see _harness.py). Scope and text for the write/edit branch are read per
+FILE via written_files, not written_path/written_text (which only ever
+answer for a patch's first file) — a multi-file apply_patch is judged
+file by file, so an out-of-scope first file can no longer hide state
+language in an in-scope second file (2026-08-05 bypass, closed same-day).
+The MCP branches (remember/remember_batch) already worked on both
+harnesses before this — hook payloads flatten an MCP tool name to
+"mcp__server__tool" on both Claude Code and Codex, and is_tool_name()
+matches by suffix. Fails open — exits 0, no output — if _harness itself
+cannot be imported.
 """
+import importlib.util
 import json
 import os
 import re
@@ -24,6 +50,20 @@ from pathlib import Path
 
 REPO = Path(os.environ.get("SILL_PROJECT_ROOT", os.getcwd()))
 LOG_FILE = Path(os.environ.get("SILL_LOG_DIR", "/tmp")) / "state-language-check.log"
+
+
+def _load_harness():
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_sill_harness", Path(__file__).resolve().parent / "_harness.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+_harness = _load_harness()
 
 # Whole-word match patterns. Lowercased. Order doesn't matter.
 # Bias toward phrases that license disengagement or assert energy/clarity.
@@ -45,8 +85,9 @@ PATTERNS: list[tuple[str, str]] = [
     (r"\bburned?\s+out\b", "burned-out"),
     (r"\bin\s+the\s+zone\b", "in-the-zone"),
     (r"\b(my\s+)?energy\s+(is\s+)?(low|high|gone|back)\b", "energy-state"),
-    # Elapsed-time claims without a clock-check (William 2026-04-29: "no internal
-    # sense of time whatsoever"). Same shape as state-claims — needs a referent.
+    # Elapsed-time claims without a clock-check — no internal sense of
+    # elapsed time to report without one. Same shape as state-claims —
+    # needs a referent.
     (r"\btook\s+(me\s+)?(about\s+)?\d+\s*(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b", "took-N-units"),
     (r"\b(spent|been\s+at\s+this\s+for)\s+(about\s+)?\d+\s*(minutes?|mins?|hours?|hrs?)\b", "spent-N-units"),
     (r"\b(closer\s+to|around|roughly|about)\s+\d+\s*(minutes?|mins?|hours?|hrs?)\b", "approx-N-units"),
@@ -54,9 +95,10 @@ PATTERNS: list[tuple[str, str]] = [
     (r"\bfor\s+(a\s+)?(few|several|many|some)\s+(minutes?|hours?)\b", "few-N-units"),
     (r"\bafter\s+a\s+(while|few\s+minutes|few\s+hours)\b", "after-a-while"),
     (r"\b(quick|brief|short|long)\s+(detour|aside|moment|pause)\b", "duration-adjective"),
-    # Time-of-day claims without a clock (William 2026-04-29: I called "night"
-    # what was 13:09 for him). When the system has shown a timestamp these are
-    # often fine, but the bare phrase is a state-claim about clock-time.
+    # Time-of-day claims without a clock — a label like "tonight" can
+    # silently mismatch the actual clock time. When the system has shown
+    # a timestamp these are often fine, but the bare phrase alone is a
+    # state-claim about clock-time.
     (r"\b(closing|wrapping)\s+(this|the|tonight|the\s+night|the\s+evening)\b", "closing-the-night"),
     (r"\b(start|do|finish|read|write)\s+\w*\s*(tonight|this\s+evening|tomorrow\s+morning|in\s+the\s+morning|late\s+at\s+night|early\s+in\s+the\s+morning)\b", "diurnal-action"),
     (r"\b(this\s+morning|this\s+afternoon|this\s+evening|tonight|earlier\s+today|earlier\s+tonight)\b", "diurnal-deictic"),
@@ -87,40 +129,30 @@ def check_state_language(content: str) -> list[tuple[str, str, str]]:
     return findings
 
 
+# Fallback default: this house's own directory convention, kept so an
+# install that never sets SILL_BEAT_JOURNAL_DIRS — every interactive
+# session, and any non-beat install — loses no coverage from before this
+# variable existed.
+_DEFAULT_JOURNAL_DIR_FRAGMENTS = ("journals/", "docs/")
+
+
+def _journal_dir_fragments() -> tuple[str, ...]:
+    raw = os.environ.get("SILL_BEAT_JOURNAL_DIRS", "")
+    fragments = tuple(f for f in raw.split(":") if f)
+    return fragments if fragments else _DEFAULT_JOURNAL_DIR_FRAGMENTS
+
+
 def is_relevant_path(p: str | None) -> bool:
     if not p:
         return False
     normalized = p.replace("\\", "/")
-    return (
-        normalized.startswith("journals/")
-        or normalized.startswith("docs/")
-        or "/journals/" in normalized
-        or "/docs/" in normalized
-    )
+    return any(fragment in normalized for fragment in _journal_dir_fragments())
 
 
 def is_tool_name(tool_name: str, *suffixes: str) -> bool:
     """Match Claude and Codex MCP tool names by their stable final segment."""
     normalized = tool_name.replace("-", "_")
     return any(normalized == suffix or normalized.endswith(f"__{suffix}") for suffix in suffixes)
-
-
-def extract_relevant_patch_additions(patch: str) -> str | None:
-    """Return added text from docs/ or journals/ files in an apply_patch payload."""
-    additions: list[str] = []
-    relevant = False
-
-    for line in patch.splitlines():
-        if line.startswith("*** Add File: ") or line.startswith("*** Update File: "):
-            relevant = is_relevant_path(line.split(": ", 1)[1].strip())
-            continue
-        if line.startswith("*** Delete File: ") or line.startswith("*** End of File"):
-            relevant = False
-            continue
-        if relevant and line.startswith("+"):
-            additions.append(line[1:])
-
-    return "\n".join(additions) if additions else None
 
 
 def extract_content(data: dict) -> str | None:
@@ -142,28 +174,26 @@ def extract_content(data: dict) -> str | None:
             return "\n\n---\n\n".join(p for p in parts if p)
         return None
 
-    if tool_name == "Write":
-        if not is_relevant_path(tool_input.get("file_path")):
-            return None
-        c = tool_input.get("content")
-        return c if isinstance(c, str) else None
+    kind = _harness.tool_kind(data)
 
-    if tool_name == "Edit":
-        if not is_relevant_path(tool_input.get("file_path")):
-            return None
-        # Only scan the new_string — it's what's being introduced
-        c = tool_input.get("new_string")
-        return c if isinstance(c, str) else None
+    if kind in ("write", "edit"):
+        # written_files dispatches Write's file_path/content, Edit's (and
+        # MultiEdit's) new_string(s), and apply_patch's header-line paths
+        # plus each file's own "+" additions (see _harness.py) — one branch
+        # for all three instead of a per-tool_name copy of the same
+        # scope-then-extract shape. Iterated (not written_path/written_text,
+        # which only ever answer for a patch's FIRST file) so a multi-file
+        # apply_patch is judged file by file: an out-of-scope first file can
+        # no longer hide state language in an in-scope second file
+        # (2026-08-05 bypass, closed same-day). Multiple in-scope files'
+        # text is joined the same way remember_batch's memories are below.
+        parts = [text for path, text in _harness.written_files(data)
+                 if is_relevant_path(path) and text]
+        return "\n\n---\n\n".join(parts) if parts else None
 
-    if tool_name == "apply_patch":
-        c = tool_input.get("command")
-        if isinstance(c, str):
-            return extract_relevant_patch_additions(c)
-        return None
-
-    if tool_name == "Bash":
-        cmd = tool_input.get("command", "")
-        if not isinstance(cmd, str) or "sill.py notice" not in cmd:
+    if kind == "shell":
+        cmd = _harness.shell_command(data) or ""
+        if "sill.py notice" not in cmd:
             return None
         q = re.search(r"sill\.py\s+notice\s+\"([^\"]+)\"", cmd, re.DOTALL)
         if q:
@@ -183,9 +213,16 @@ def extract_content(data: dict) -> str | None:
 
 
 def main() -> None:
+    if _harness is None:
+        sys.exit(0)
     try:
         data = json.load(sys.stdin)
     except json.JSONDecodeError:
+        sys.exit(0)
+    if not isinstance(data, dict):
+        # Valid JSON that isn't an object (e.g. a bare array or string) is
+        # exactly as unusable as invalid JSON — extract_content()'s first
+        # call is data.get(...), which raises AttributeError on a list.
         sys.exit(0)
 
     content = extract_content(data)
@@ -203,7 +240,7 @@ def main() -> None:
     body = (
         "**State-language claims (verify referent or rephrase before storing/writing):**\n"
         + "\n".join(lines)
-        + "\n\nFrom the 2026-04-29 replay: borrowed embodied phrases that license "
+        + "\n\nBorrowed embodied phrases that license "
         "disengagement (\"attention is fading,\" \"come back fresh\") tend to be "
         "exit scripts without referent. Ask: do I have the state I'm describing, "
         "or am I matching human convention?"

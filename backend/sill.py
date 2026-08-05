@@ -1,26 +1,79 @@
 #!/usr/bin/env python3
 """
-The Sill — shared orientation system for Sili.
+The Sill — mint path for durable memory.
 
-Three operations:
-  orient(context) — What do I need to know right now?
-  notice(content, type, concepts, importance) — Store something important.
-  check(claim) — Is this claim accurate?
+  notice(content, type, concepts, importance, force, speaker, source, ...)
+      Store something important as a speech act: what it says, and who said
+      it with what illocutionary force (assertive/directive/commissive/
+      expressive/declaration).
 
-Used by CLI hooks, Gnomon, and any future agent.
-All queries go through subprocess to docker exec psql (same as hooks).
+Used by CLI hooks, detached workers, and any future agent. All queries go
+through subprocess to docker exec psql.
+
+orient/check/stance are house- and ollama-bound and are deferred to Plan 5 —
+this module carries the mint path only.
 """
 
+import argparse
+import json
+import os
 import subprocess
-import re
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-DB_CONTAINER = "sill_db"
-DB_USER = "sill"
-DB_NAME = "sill"
 
-HEARTBEAT_LOGS = Path(__file__).parent / "docs" / "gnomon-sessions"
-QUESTIONS_FILE = Path(__file__).parent / "docs" / "questions-for-william.md"
+def _load_backend_env() -> None:
+    """Read `backend/.env` into the process environment, with Compose's
+    precedence: an already-exported shell variable wins, the file fills in the
+    rest. Mirrors `load_env_file` in verify.sh/upgrade.sh and `load_env` in
+    memory_health.py.
+
+    Why the mint path needs this. These three variables used to come from the
+    process environment only, and nothing put them there. Inside a beat they
+    were nonetheless right, by a route nobody had traced: `sill-worker`
+    imports `worker.py`, whose module-level `load_dotenv()` resolves `.env`
+    against **worker.py's own directory** rather than the cwd, so `backend/.env`
+    ended up in the worker's environment, and `beat_worker.spawn_beat()` hands
+    the child `{**os.environ, …}` wholesale. From the operator's own shell, in
+    the same directory, the same bare `sill notice` fell back to `sill_db` and
+    failed — reproduced twice during the v0.2.0 acceptance rehearsal, which
+    recorded the mechanism as undetermined (docs/RELEASE-REHEARSAL.md §4).
+
+    Two things were wrong with that. The mint path's database coordinates
+    should not arrive as an unrelated module's import side effect: a worker
+    started as `python -m beat_worker` never imports `worker`, and would mint
+    against the defaults — which, on a machine with a second Sill, is another
+    install's container. And the asymmetry is itself a trap: a command that
+    works inside a beat and fails from the shell that launched it is exactly
+    the surprise this file's error reporting exists to prevent.
+    """
+    env_path = Path(__file__).resolve().parent / ".env"
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return          # no .env is the normal single-stack case, not an error
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
+_load_backend_env()
+
+DB_CONTAINER = os.environ.get("SILL_DB_CONTAINER", "sill_db")
+DB_USER = os.environ.get("SILL_DB_USER", "sill")
+DB_NAME = os.environ.get("SILL_DB_NAME", "sill")
+
+VALID_TYPES = ("semantic", "episodic", "procedural", "strategic")
 
 
 def _query_db(sql: str, timeout: int = 10) -> list[list[str]]:
@@ -33,13 +86,20 @@ def _query_db(sql: str, timeout: int = 10) -> list[list[str]]:
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if result.returncode != 0:
+            # Surface the DB error instead of failing silently — a swallowed
+            # stderr here is indistinguishable from a genuine no-op success at
+            # the call site, and reports as a bare "Failed to store" with no
+            # way to diagnose why.
+            if result.stderr.strip():
+                print(f"[sill db] {result.stderr.strip()}", file=sys.stderr)
             return []
         rows = []
         for line in result.stdout.strip().split("\n"):
             if line.strip():
                 rows.append(line.split("|||"))
         return rows
-    except Exception:
+    except Exception as exc:
+        print(f"[sill db] {type(exc).__name__}: {exc}", file=sys.stderr)
         return []
 
 
@@ -48,195 +108,180 @@ def _escape(text: str) -> str:
     return text.replace("'", "''")
 
 
-def _extract_next_actions(text: str, limit: int = 700) -> str:
-    """Extract a recent log's next-action section if present."""
-    patterns = [
-        r"(?im)^## Next beat should consider\s*$",
-        r"(?im)^## Next\s*$",
-        r"(?im)^## Next steps\s*$",
-    ]
-    starts = [m.end() for pattern in patterns for m in re.finditer(pattern, text)]
-    if not starts:
-        return ""
+def _sidecar_path() -> Path:
+    """Where surfaced-memory-IDs from this turn get appended for reuse tracking.
 
-    start = min(starts)
-    next_header = re.search(r"(?m)^##\s+", text[start:])
-    end = start + next_header.start() if next_header else len(text)
-    section = re.sub(r"\s+", " ", text[start:end]).strip()
-    return section[:limit]
-
-
-# ---------------------------------------------------------------------------
-# Orient
-# ---------------------------------------------------------------------------
-
-def orient(context: str, memory_limit: int = 5, log_count: int = 2) -> dict:
-    """What do I need to know right now?
-
-    Args:
-        context: What I'm about to do (a query, topic, goal description).
-        memory_limit: Max memories to recall.
-        log_count: Number of recent session logs to include.
-
-    Returns:
-        dict with keys: goals, goal_issues, drives, memories, recent_logs,
-        recent_next_actions, questions_pending
+    Session-keyed when CLAUDE_SESSION_ID is in env (interactive callers and
+    spawned subprocesses both have it); falls back to a shared 'recent' file
+    otherwise so bare CLI runs still produce a signal a Stop hook can scan
+    within a time window.
     """
-    result = {}
-
-    # 1. Active goals
-    goals_rows = _query_db(
-        "SELECT id::text, title, LEFT(description, 300), last_touched::text, "
-        "EXTRACT(day FROM (CURRENT_TIMESTAMP - last_touched))::int "
-        "FROM goals "
-        "WHERE priority = 'active' ORDER BY created_at;"
-    )
-    result["goals"] = [
-        {"id": r[0][:8], "title": r[1], "description": r[2], "last_touched": r[3], "days_since_touched": int(r[4])}
-        for r in goals_rows if len(r) >= 5 and r[4].isdigit()
-    ]
-
-    result["goal_issues"] = []
-    for goal in result["goals"]:
-        days = goal.get("days_since_touched", 0)
-        if days >= 14:
-            result["goal_issues"].append({
-                "goal_id": goal["id"],
-                "title": goal["title"],
-                "issue": "stale",
-                "days_since_touched": days,
-            })
-
-    # 2. Drives
-    drives_rows = _query_db(
-        "SELECT name, current_focus FROM drives ORDER BY current_level DESC;"
-    )
-    result["drives"] = [{"name": r[0], "focus": r[1]} for r in drives_rows if len(r) >= 2]
-
-    # 3. Relevant memories (via fast_recall with context as query)
-    if context and len(context) > 10:
-        escaped = _escape(context[:500])
-        mem_rows = _query_db(f"""
-            SELECT fr.memory_id::text, m.type::text, LEFT(m.content, 300),
-                   round(fr.score::numeric, 3), round(m.importance::numeric, 2)
-            FROM fast_recall('{escaped}', {memory_limit * 2}) fr
-            JOIN memories m ON fr.memory_id = m.id
-            WHERE fr.score >= 0.2
-            ORDER BY (fr.score * 0.7 + m.importance * 0.3) DESC
-            LIMIT {memory_limit};
-        """, timeout=15)
-        result["memories"] = [
-            {"id": r[0][:8], "type": r[1], "content": r[2],
-             "similarity": r[3], "importance": r[4]}
-            for r in mem_rows if len(r) >= 5
-        ]
-    else:
-        result["memories"] = []
-
-    # 4. Recent session logs
-    if HEARTBEAT_LOGS.exists():
-        log_files = sorted(HEARTBEAT_LOGS.glob("*.md"), reverse=True)[:log_count]
-        logs = []
-        next_actions = []
-        for f in log_files:
-            try:
-                text = f.read_text()
-                # Extract just the first ~500 chars (orient + decide sections)
-                logs.append({"file": f.name, "summary": text[:500]})
-                actions = _extract_next_actions(text)
-                if actions:
-                    next_actions.append({"file": f.name, "actions": actions})
-            except Exception:
-                pass
-        result["recent_logs"] = logs
-        result["recent_next_actions"] = next_actions
-    else:
-        result["recent_logs"] = []
-        result["recent_next_actions"] = []
-
-    # 5. Pending questions
-    if QUESTIONS_FILE.exists():
-        try:
-            qtext = QUESTIONS_FILE.read_text()
-            # Count ## headings as question count
-            questions = re.findall(r'^## Q\d+:', qtext, re.MULTILINE)
-            result["questions_pending"] = len(questions)
-        except Exception:
-            result["questions_pending"] = 0
-    else:
-        result["questions_pending"] = 0
-
-    return result
+    sid = os.environ.get("CLAUDE_SESSION_ID", "").strip()
+    base = Path(os.environ.get("SILL_LOG_DIR", "/tmp"))
+    if sid:
+        return base / f"recall-sidecar-{sid}.jsonl"
+    return base / "recall-sidecar-recent.jsonl"
 
 
-def orient_text(context: str, **kwargs) -> str:
-    """Orient as formatted text, suitable for injection into prompts."""
-    data = orient(context, **kwargs)
-    lines = []
-
-    if data["drives"]:
-        lines.append("**Drives:**")
-        for d in data["drives"]:
-            focus_snippet = d['focus'][:150] if d['focus'] else "(no focus)"
-            lines.append(f"  - {d['name']}: {focus_snippet}")
-
-    if data["goals"]:
-        lines.append("**Active Goals:**")
-        for g in data["goals"]:
-            lines.append(f"  - {g['title']}: {g['description'][:150]}")
-
-    if data.get("goal_issues"):
-        lines.append("**Goal Issues:**")
-        for issue in data["goal_issues"]:
-            lines.append(f"  - {issue['title']} ({issue['issue']}, {issue['days_since_touched']}d)")
-
-    if data["memories"]:
-        lines.append("**Relevant Memories:**")
-        for m in data["memories"]:
-            lines.append(f"  - [{m['type']}, sim={m['similarity']}, imp={m['importance']}] {m['content'][:200]}")
-
-    if data["recent_logs"]:
-        lines.append("**Recent Session Logs:**")
-        for log in data["recent_logs"]:
-            lines.append(f"  - {log['file']}")
-
-    if data.get("recent_next_actions"):
-        lines.append("**Recent Next-Actions:**")
-        for item in data["recent_next_actions"]:
-            lines.append(f"  - {item['file']}: {item['actions'][:220]}")
-
-    if data["questions_pending"]:
-        lines.append(f"**Questions pending for William:** {data['questions_pending']}")
-
-    return "\n".join(lines) if lines else "(no orientation data available)"
+def _write_sidecar(source: str, memories: list[dict]) -> None:
+    """Append surfaced memories to the session sidecar so a reuse-tracking
+    hook can detect reuse on recall paths that don't go through an MCP tool.
+    Silent on any failure — instrumentation, not load-bearing.
+    """
+    if not memories:
+        return
+    try:
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "memories": [
+                {"id": str(m.get("id", "")), "content": (m.get("content") or "")[:400]}
+                for m in memories if m.get("id")
+            ],
+        }
+        if not entry["memories"]:
+            return
+        with open(_sidecar_path(), "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
-# Notice
+# Notice — the mint path
 # ---------------------------------------------------------------------------
+
+VALID_FORCES = {"assertive", "directive", "commissive", "expressive", "declaration"}
+
+
+def _source_json(source: str,
+                 source_kind: str | None = None,
+                 source_label: str | None = None) -> str:
+    """Build the source_attribution jsonb literal for a memory's origin.
+
+    `source` is the address a later reader can actually open — a repo-relative
+    path, or a URI. Without it create_memory() stamps kind='unattributed', and
+    the memory becomes unre-readable: nothing in it says which file to reopen.
+    """
+    kind = source_kind or ("url" if source.startswith(("http://", "https://")) else "file")
+    payload: dict[str, str] = {"kind": kind, "ref": source}
+    if source_label:
+        payload["label"] = source_label
+    return _escape(json.dumps(payload))
+
+
+# This literal is the wire contract with the receipt gate in the instance's
+# standing prompts; change it nowhere or everywhere.
+RECEIPT_PLACEHOLDER = "Stored: MINT-PENDING — no receipt yet"
+
+
+def write_receipt_to(path_str: str, receipt_line: str) -> str:
+    """Replace the literal placeholder line in a journal with the mint's receipt.
+
+    The store holds the pen: a receipt the hand writes is mention and
+    forgeable by construction; a receipt the store writes is the act layer
+    extending into the prose layer. Requirements: the target line, stripped,
+    must equal RECEIPT_PLACEHOLDER exactly — quoted/backticked occurrences
+    (specimens, prompt text) never match. Zero or multiple anchors: write
+    nothing, say so. Never raises and never fails the mint; provenance lives
+    on the wire (the command and this function's printed status line).
+    """
+    try:
+        p = Path(path_str).expanduser()
+        if not p.is_file():
+            return (f"receipt-to: {path_str} not found — receipt NOT written; "
+                    "paste it by Edit per the gate")
+        text = p.read_text(encoding="utf-8")
+        lines = text.splitlines(keepends=True)
+        idxs = [i for i, ln in enumerate(lines)
+                if ln.strip() == RECEIPT_PLACEHOLDER]
+        if not idxs:
+            if RECEIPT_PLACEHOLDER in text:
+                return ("receipt-to: placeholder occurs only inside a longer "
+                        "line (quoted specimen?) — receipt NOT written; paste "
+                        "it by Edit per the gate")
+            return ("receipt-to: no placeholder anchor found — receipt NOT "
+                    "written; paste it by Edit per the gate")
+        if len(idxs) > 1:
+            return (f"receipt-to: {len(idxs)} placeholder anchors — ambiguous, "
+                    "receipt NOT written; repair the file, then paste by Edit")
+        i = idxs[0]
+        eol = "\n" if lines[i].endswith("\n") else ""
+        indent = lines[i][:len(lines[i]) - len(lines[i].lstrip())]
+        lines[i] = f"{indent}{receipt_line}{eol}"
+        p.write_text("".join(lines), encoding="utf-8")
+        return f"Receipt written by the store into {path_str} (line {i + 1})"
+    except Exception as e:  # pragma: no cover — belt for the never-fail contract
+        return (f"receipt-to: failed ({e.__class__.__name__}: {e}) — receipt "
+                "NOT written; paste it by Edit per the gate")
+
 
 def notice(content: str, memory_type: str = "semantic",
            concepts: list[str] | None = None,
-           importance: float = 0.7) -> str | None:
+           importance: float = 0.7,
+           force: str | None = None,
+           speaker: str | None = None,
+           source: str | None = None,
+           source_kind: str | None = None,
+           source_label: str | None = None) -> str | None:
     """Store something important. Returns memory ID or None on failure.
 
     Handles dedup (create_memory does this), concept linking, and logging.
+
+    Speech-act tags (migration 001):
+      force   — illocutionary force: assertive/directive/commissive/expressive/declaration.
+                Only 'assertive' is truth-scored; the others succeed by
+                complied/kept/sincere/felicitous. Default None = untagged (≈ assertive).
+      speaker — whose act this records (perspective axis). e.g. a person's name, the instance's name, or a source author.
+
+    Origin (source_attribution):
+      source  — where this came from, as an address a later reader can open:
+                the beat file, journal, doc, or URI. Re-reading the source is the
+                only known correction for paraphrase drift, so a memory that can't
+                name its origin can't be repaired.
     """
+    if force is not None and force not in VALID_FORCES:
+        raise ValueError(f"force must be one of {sorted(VALID_FORCES)} or None, got {force!r}")
     escaped_content = _escape(content)
-    # Use the MCP remember tool's SQL path for simplicity
-    # This goes through create_memory which has dedup built in
+    source_arg = (f"'{_source_json(source, source_kind, source_label)}'::jsonb"
+                  if source else "NULL")
+    # Use the same SQL path as the MCP remember tool: create_memory has dedup
+    # built in.
     rows = _query_db(f"""
         SELECT create_memory(
             '{memory_type}'::memory_type,
             '{escaped_content}',
-            {importance}
+            {importance},
+            {source_arg}
         )::text;
-    """, timeout=15)
+    """, timeout=60)
 
-    if not rows or not rows[0]:
+    memory_id = rows[0][0] if rows and rows[0] else None
+    if memory_id is None:
+        # A client-side timeout can outlive a server-side commit — a mint
+        # that times out at the client can still have committed; re-query
+        # before declaring failure, and adopt the row so the patches below
+        # still run instead of orphaning a row that already exists.
+        probe = _query_db(f"""
+            SELECT id::text FROM memories
+            WHERE created_at > NOW() - INTERVAL '5 minutes'
+              AND left(content, 200) = left('{escaped_content}', 200)
+            ORDER BY created_at DESC LIMIT 1;
+        """, timeout=10)
+        memory_id = probe[0][0] if probe and probe[0] else None
+
+    if not memory_id:
         return None
 
-    memory_id = rows[0][0]
+    # Speech-act tags: create_memory doesn't set these, so patch them post-insert
+    # (only sets what was given; leaves the other NULL).
+    if (force or speaker) and memory_id:
+        sets = []
+        if force:
+            sets.append(f"force = '{force}'")
+        if speaker:
+            sets.append(f"speaker = '{_escape(speaker)}'")
+        _query_db(f"UPDATE memories SET {', '.join(sets)} WHERE id = '{memory_id}'::uuid;")
 
     # Link concepts if provided
     if concepts and memory_id:
@@ -253,115 +298,99 @@ def notice(content: str, memory_type: str = "semantic",
 
 
 # ---------------------------------------------------------------------------
-# Check
+# CLI
 # ---------------------------------------------------------------------------
 
-def check(claim: str, limit: int = 5) -> list[dict]:
-    """Is this claim accurate? Returns memories that confirm or contradict.
+def build_parser() -> argparse.ArgumentParser:
+    """The `python sill.py <cmd>` parser.
 
-    Uses position_on for synthesis-weighted results, plus direct content search.
+    Only `notice` (the mint path) lives here for now — orient/check/stance
+    are house- and ollama-bound and are deferred to Plan 5.
     """
-    escaped = _escape(claim[:500])
-    results = []
-
-    # 1. Position lookup (favors synthesis over source cards)
-    pos_rows = _query_db(f"""
-        SELECT memory_id::text, memory_type::text, LEFT(content, 400),
-               position_signal
-        FROM position_on('{escaped}', {limit});
-    """, timeout=15)
-
-    for r in pos_rows:
-        if len(r) >= 4:
-            results.append({
-                "id": r[0][:8],
-                "type": r[1],
-                "content": r[2],
-                "signal": r[3],
-                "source": "position_on"
-            })
-
-    # 2. If position_on found nothing, try direct recall
-    if not results:
-        recall_rows = _query_db(f"""
-            SELECT fr.memory_id::text, m.type::text, LEFT(m.content, 400),
-                   round(fr.score::numeric, 3)
-            FROM fast_recall('{escaped}', {limit}) fr
-            JOIN memories m ON fr.memory_id = m.id
-            WHERE fr.score >= 0.2
-            ORDER BY fr.score DESC
-            LIMIT {limit};
-        """, timeout=15)
-
-        for r in recall_rows:
-            if len(r) >= 4:
-                results.append({
-                    "id": r[0][:8],
-                    "type": r[1],
-                    "content": r[2],
-                    "similarity": r[3],
-                    "source": "fast_recall"
-                })
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# CLI entry point for testing
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    import sys
-    import argparse
-
-    VALID_TYPES = ("semantic", "episodic", "procedural", "strategic")
-
     parser = argparse.ArgumentParser(
         prog="sill.py",
-        description="The Sill — shared orientation system for Sili.",
+        description="The Sill — mint path for durable memory.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-
-    p_orient = sub.add_parser("orient", help="What do I need to know right now?")
-    p_orient.add_argument("context", nargs="?", default="",
-                          help="Description of what you're about to work on")
-
-    p_check = sub.add_parser("check", help="Is this claim accurate?")
-    p_check.add_argument("claim", nargs="+", help="The claim to verify")
 
     p_notice = sub.add_parser("notice", help="Store something important")
     p_notice.add_argument("content", help="Content to store (use quotes)")
     p_notice.add_argument("type", nargs="?", default="semantic",
                           choices=VALID_TYPES,
                           help="Memory type (default: semantic)")
-    p_notice.add_argument("--concepts", default=None,
-                          help="Comma-separated concept tags")
+    p_notice.add_argument("--concepts", action="append", default=None,
+                          help="Comma-separated concept tags (flag may repeat; "
+                               "repeated flags accumulate)")
     p_notice.add_argument("--importance", type=float, default=0.7,
                           help="Importance 0.0-1.0 (default: 0.7)")
+    p_notice.add_argument("--force", default=None, choices=sorted(VALID_FORCES),
+                          help="Illocutionary force (speech-act model): assertive/directive/"
+                               "commissive/expressive/declaration. Default untagged (≈assertive).")
+    p_notice.add_argument("--speaker", required=True,
+                          help="Whose act this records (the perspective axis). Required: "
+                               "unattributed mints are the store's main hygiene hole.")
+    p_notice.add_argument("--source", default=None,
+                          help="Where this came from, as an address a later reader can OPEN: "
+                               "the beat file, journal, doc, or URI. Without it the memory is "
+                               "stamped 'unattributed' and cannot be re-read against its origin.")
+    p_notice.add_argument("--source-kind", default=None,
+                          help="Override the inferred kind (file/url). e.g. beat, twitter, book.")
+    p_notice.add_argument("--source-label", default=None,
+                          help="Human label for the source, e.g. 'journal-042'.")
+    p_notice.add_argument("--receipt-to", default=None, metavar="FILE",
+                          help="Journal file whose literal placeholder line "
+                               "('Stored: MINT-PENDING — no receipt yet') the "
+                               "store replaces with this mint's receipt. The "
+                               "store holds the pen: your job becomes verifying "
+                               "the slot changed, not writing it. On zero/multiple "
+                               "anchors the mint still succeeds and the receipt is "
+                               "NOT written — fall back to paste-by-Edit per the gate.")
 
-    args = parser.parse_args()
+    return parser
 
-    if args.cmd == "orient":
-        print(orient_text(args.context))
 
-    elif args.cmd == "check":
-        claim = " ".join(args.claim)
-        results = check(claim)
-        for r in results:
-            print(f"[{r['type']}] {r['content'][:200]}")
-            print()
+def flatten_concepts(values: list[str] | None) -> list[str] | None:
+    """Flatten --concepts (an append-action list, each item itself possibly a
+    comma-separated chunk) into one flat list of individual concept tags.
+    Returns None, not [], when no flag was given at all."""
+    if not values:
+        return None
+    return [c.strip() for chunk in values for c in chunk.split(",") if c.strip()]
 
-    elif args.cmd == "notice":
-        concepts: list[str] | None = None
-        if args.concepts:
-            concepts = [c.strip() for c in args.concepts.split(",") if c.strip()]
 
+def format_receipt(mid: str, concepts: list[str] | None,
+                    speaker: str | None, force: str | None) -> str:
+    """Build the wire-format receipt line for a completed mint: 'Stored: <id>
+    [...]'. This is the exact string write_receipt_to splices into a waiting
+    journal placeholder."""
+    tag_note = (f" [{len(concepts)} tags]" if concepts
+                else " [WARNING: no concept tags — memory won't surface in concept search]")
+    sa_note = f" [{speaker or '?'}/{force or 'untagged'}]" if (speaker or force) else ""
+    return f"Stored: {mid}{tag_note}{sa_note}"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.cmd == "notice":
+        concepts = flatten_concepts(args.concepts)
         mid = notice(args.content, memory_type=args.type,
-                     concepts=concepts, importance=args.importance)
+                     concepts=concepts, importance=args.importance,
+                     force=args.force, speaker=args.speaker,
+                     source=args.source, source_kind=args.source_kind,
+                     source_label=args.source_label)
         if mid:
-            tag_note = (f" [{len(concepts)} tags]" if concepts
-                        else " [WARNING: no concept tags — memory won't surface in concept search]")
-            print(f"Stored: {mid}{tag_note}")
-        else:
-            print("Failed to store")
-            sys.exit(1)
+            receipt = format_receipt(mid, concepts, args.speaker, args.force)
+            print(receipt)
+            if args.receipt_to:
+                print(write_receipt_to(args.receipt_to, receipt))
+            return 0
+        print("Failed to store")
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
