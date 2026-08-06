@@ -41,7 +41,6 @@ first. Codex refuses to start on that file, so this is worth checking
 even if you are not sure the installer ever touched it.
 
 ### Added
-
 - **The embeddings image and platform are operator-overridable**
   (`EMBEDDING_IMAGE`, `EMBEDDING_PLATFORM`). Defaults are unchanged —
   `cpu-1.8` on `linux/amd64`, byte-for-byte what v0.2.0 shipped — so an
@@ -58,6 +57,7 @@ even if you are not sure the installer ever touched it.
   not buy Metal — containers on macOS have no GPU access, so the win is
   the emulation tax alone. Pinned by
   `backend/tests/test_embeddings_image_override.py`.
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `feat/arm64-embeddings`.
 - **`SILL_BIND_ADDR` chooses which interface the published ports bind
   to.** Default `0.0.0.0` — exactly what an unprefixed Compose mapping
   already meant, so upgrading moves nobody's ports. The reason it is now
@@ -73,9 +73,9 @@ even if you are not sure the installer ever touched it.
   `backend/tests/test_bind_addr_override.py`, including a guard that
   fails if a service starts publishing a fourth port without deciding
   about its bind address.
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `feat/configurable-bind-addr`.
 
 ### Fixed
-
 - **`install.sh` step 7 could corrupt `~/.codex/config.toml`.** When the
   file already carried a `[features]` section without a `hooks` key, the
   merge appended a *second* `[features]` table header. TOML forbids
@@ -90,6 +90,7 @@ even if you are not sure the installer ever touched it.
   regexes read wrongly — the merged text is parsed before it is written,
   with a loud refusal and hand-edit instructions if it would not.
   Pinned by `backend/tests/test_codex_config_merge.py`.
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `fix/codex-features-table`.
 - **Seven live references still sent readers to `~/.claude/.mcp.json`.**
   v0.2.0 fixed the code — install.sh now registers the MCP server in
   `~/.claude.json`, which is the file Claude Code actually reads — but the
@@ -106,7 +107,7 @@ even if you are not sure the installer ever touched it.
   warning comment — are unchanged, and
   `backend/tests/test_mcp_registry_path_docs.py` sweeps the tree so the
   distinction survives the next edit.
-
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `docs/claude-json-path`.
 - **`recall` reported rank position in a field named `similarity`.**
   `CognitiveMemory.recall()` selects `hybrid_recall`'s score — Reciprocal
   Rank Fusion at k=60, `1/(60+vector_rank) + 1/(60+fts_rank)` — and
@@ -132,7 +133,7 @@ even if you are not sure the installer ever touched it.
 
   *Wire-format change:* anything reading `similarity` off a `recall` or
   `recall_preview` result must read `score` instead.
-
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `fix/recall-score-not-similarity`.
 - **A memory stored seconds ago was labelled `-1d ago`.**
   `spontaneous-recall.py` split the UTC offset off Postgres's timestamp
   (`.split('+')[0]`), leaving a naive datetime that still held the *UTC*
@@ -151,7 +152,7 @@ even if you are not sure the installer ever touched it.
   `backend/tests/test_recall_age_timezone.py`, including a
   characterization test that reproduces the old arithmetic at a fixed
   UTC-7 observer so the defect is demonstrated rather than asserted.
-
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `fix/recall-age-timezone`.
 - **`verify.sh` check 6 never ran the conformance suite on a normal
   install.** It probed `python3 -c "import pytest"` and ran `python3 -m
   pytest` — but `install.sh` puts the backend in a pipx venv, or in
@@ -170,7 +171,7 @@ even if you are not sure the installer ever touched it.
   `backend/tests/test_verify_conformance_interpreter.py`, including a
   test that fails if verify.sh's resolution order drifts from
   install.sh's.
-
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `fix/verify-honors-sill-python`.
 - **Five readers of the renamed `similarity` field were missed.**
   `backend/memory_tools.py` kept five `m.similarity` accesses through the
   rename above, each an `AttributeError` the moment that code runs. The
@@ -187,12 +188,12 @@ even if you are not sure the installer ever touched it.
   of the Codex-vocabulary fixes below hit exactly that bind and cut a
   version number to escape it. The assertion is now scoped to the v0.2.0
   section, which is what it was ever really about.
+  Contributed by Adeh DeSandies ([@adevadeh](https://github.com/adevadeh)), branch `fix/changelog-unreleased-section`.
 
 Codex's tool vocabulary was derived by hand for v0.2.0. A census of 309
 real Codex rollout transcripts (`~/.codex/sessions`) falsified three parts
 of it — the procedure is in `docs/adapters.md` ("What's version-fragile"),
 and it is worth re-running against your own sessions after a Codex upgrade.
-
 - **Two Codex shell tools were invisible.** `shell` (314 calls in the
   census) and `shell_command` (355) were in neither the hook matchers nor
   `_SHELL_NAMES`, so `shell-idiom-guard`, `attribution-check`, and
