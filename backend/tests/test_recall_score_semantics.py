@@ -72,6 +72,39 @@ def test_partial_activation_similarities_are_untouched():
     assert {"cluster_similarity", "best_memory_similarity"} <= names
 
 
+def test_no_shipped_module_still_reads_the_old_attribute():
+    """Renaming the field is only half the job — every reader has to move too.
+
+    `backend/memory_tools.py` kept five `m.similarity` reads through the
+    rename, each now an AttributeError the moment that code runs. Nothing
+    caught it: the module is dead code (documented as such in
+    test_v01_leftover_names.py), so the smoke test imports it — which does not
+    execute an attribute access — and no test calls it. It is still a shipped
+    py-module in pyproject.toml, so shipping a known AttributeError inside it
+    is not made acceptable by nobody currently calling it.
+
+    Attribute access only. SQL aliases (`... as similarity`), prose, and
+    PartialActivation's genuine cosine fields are all left alone.
+    """
+    offenders = []
+    for path in sorted(BACKEND.rglob("*.py")):
+        if "tests" in path.parts:
+            continue
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for m in re.finditer(r"\.similarity\b", line):
+                # `x.cluster_similarity` / `x.best_memory_similarity` match
+                # `\.similarity` only via their own dotted prefix; require the
+                # dot to be preceded by an identifier char that isn't part of
+                # one of those names.
+                if re.search(r"(cluster|best_memory)_similarity", line[:m.end()]):
+                    continue
+                offenders.append(f"{path.relative_to(BACKEND).as_posix()}:{n}: {line.strip()}")
+    assert not offenders, (
+        "the Memory/MemoryPreview field is `score`; these read the removed "
+        "`similarity` attribute:\n  " + "\n  ".join(offenders)
+    )
+
+
 def recall_tool_description() -> str:
     """The `recall` tool's description string as registered with MCP."""
     text = MCP_SERVER.read_text(encoding="utf-8")

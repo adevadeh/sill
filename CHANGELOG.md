@@ -7,10 +7,18 @@ All notable changes to Sill are recorded here. Format loosely follows
 
 ### Upgrading from v0.2.0
 
-Two of the fixes below are in `plugin/codex.hooks.json.template`'s
-**matchers**, which are copied into your project's config at install time —
-updating the code alone leaves the old matchers in place, and a `shell` /
-`shell_command` call still never reaches a hook. Re-render them:
+**Breaking, if you read `recall`'s output programmatically.** The MCP
+`recall` result's per-memory `similarity` key is now `score` — the field
+is serialized by name (`asdict`), so the rename reaches the wire. Same
+value, honest name; see the Fixed entry for why the old one was actively
+misleading. Nothing inside Sill reads the old key, but a script or agent
+of yours that does will see `None`/`KeyError` rather than a wrong number.
+
+**Re-render your hook wiring.** Two fixes below are in
+`plugin/codex.hooks.json.template`'s **matchers**, which are copied into
+your project's config at install time — updating the code alone leaves
+the old matchers in place, and a `shell` / `shell_command` call still
+never reaches a hook:
 
 ```bash
 ./upgrade.sh --hooks-for <project> --hooks-only --force-hooks
@@ -19,6 +27,18 @@ updating the code alone leaves the old matchers in place, and a `shell` /
 On Codex this changes the hook commands' recorded config, so Codex will
 ask you to re-approve them (it SHA-256-pins each one — see
 `docs/adapters.md`).
+
+**If v0.2.0's installer already corrupted `~/.codex/config.toml`**, this
+release fixes the installer but cannot repair a file it can no longer
+parse. Check for the damage and remove the duplicate table by hand:
+
+```bash
+grep -n '^\[features\]' ~/.codex/config.toml
+```
+
+Two or more hits means the second one and its keys need folding into the
+first. Codex refuses to start on that file, so this is worth checking
+even if you are not sure the installer ever touched it.
 
 ### Added
 
@@ -151,6 +171,14 @@ ask you to re-approve them (it SHA-256-pins each one — see
   test that fails if verify.sh's resolution order drifts from
   install.sh's.
 
+- **Five readers of the renamed `similarity` field were missed.**
+  `backend/memory_tools.py` kept five `m.similarity` accesses through the
+  rename above, each an `AttributeError` the moment that code runs. The
+  module is dead code and a shipped `py-module` both, so the smoke test
+  imported it — which never executes an attribute access — and nothing
+  else called it. Now reads `m.score`, with a source sweep in
+  `test_recall_score_semantics.py` that fails on any shipped module still
+  reading the old attribute.
 - **The changelog-freshness test forbade an `Unreleased` section.** It
   read everything above the v0.1.0 heading, so the standard Keep a Changelog
   place for landed-but-unshipped work — the format this file's own header

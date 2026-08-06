@@ -749,7 +749,7 @@ class ApiMemoryToolHandler:
                 "memory_id": str(m.id),
                 "content": m.content,
                 "memory_type": m.type.value,
-                "score": m.similarity,
+                "score": m.score,
                 "source": m.source,
                 "importance": m.importance,
                 "trust_level": m.trust_level,
@@ -823,7 +823,7 @@ class ApiMemoryToolHandler:
                         "trust_level": m.trust_level,
                         "source_attribution": m.source_attribution,
                         "source": m.source,
-                        "score": m.similarity,
+                        "score": m.score,
                     },
                 )
 
@@ -836,7 +836,7 @@ class ApiMemoryToolHandler:
         if not task:
             return {"procedures": [], "count": 0, "task": task}
         res = self.client.recall(task, limit=limit, memory_types=[ApiMemoryType.PROCEDURAL], include_partial=False)
-        return {"procedures": [{"memory_id": str(m.id), "content": m.content, "score": m.similarity} for m in res.memories], "count": len(res.memories), "task": task}
+        return {"procedures": [{"memory_id": str(m.id), "content": m.content, "score": m.score} for m in res.memories], "count": len(res.memories), "task": task}
 
     def _handle_get_strategies(self, args: dict) -> dict:
         situation = str(args.get("situation", "")).strip()
@@ -844,7 +844,7 @@ class ApiMemoryToolHandler:
         if not situation:
             return {"strategies": [], "count": 0, "situation": situation}
         res = self.client.recall(situation, limit=limit, memory_types=[ApiMemoryType.STRATEGIC], include_partial=False)
-        return {"strategies": [{"memory_id": str(m.id), "content": m.content, "score": m.similarity} for m in res.memories], "count": len(res.memories), "situation": situation}
+        return {"strategies": [{"memory_id": str(m.id), "content": m.content, "score": m.score} for m in res.memories], "count": len(res.memories), "situation": situation}
 
     def _handle_create_goal(self, args: dict) -> dict:
         title = str(args.get("title", "")).strip()
@@ -936,7 +936,7 @@ class ContextEnricher:
                 "memory_id": str(m.id),
                 "content": m.content,
                 "memory_type": m.type.value,
-                "score": m.similarity,
+                "score": m.score,
                 "source": m.source,
                 "importance": m.importance,
                 "trust_level": m.trust_level,
