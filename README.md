@@ -252,8 +252,8 @@ pulls the full weights.
 
 Plan for a slow first `docker compose up`, and know what "slow" means before
 you decide the install is broken. On an Apple Silicon Mac, where the compose
-file's `platform: linux/amd64` pin means the image runs emulated, first boot
-took **903 s** from container start to the first healthy probe — past
+file's default `linux/amd64` platform means the image runs emulated, first
+boot took **903 s** from container start to the first healthy probe — past
 `install.sh`'s 600 s wait, so step 4 gives up and exits 1. That is a timeout,
 not a failure: the download continues, and `./install.sh` is idempotent.
 Either wait for `docker compose -f backend/docker-compose.yml ps` to show
@@ -262,6 +262,34 @@ Either wait for `docker compose -f backend/docker-compose.yml ps` to show
 ```bash
 SILL_INSTALL_WAIT_HEALTHY_S=1800 ./install.sh
 ```
+
+### Apple Silicon: the native image
+
+The image and its platform are both overridable, so an arm64 host can skip
+the emulation entirely. In `backend/.env`:
+
+```bash
+EMBEDDING_IMAGE=ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-latest
+EMBEDDING_PLATFORM=linux/arm64
+```
+
+Three things to know before you do:
+
+- **You give up version pinning.** There is no `cpu-arm64-1.8`. Upstream
+  builds the arm64 line from main rather than from tagged releases, so
+  `cpu-arm64-latest` moves under you. Pin an immutable `cpu-arm64-sha-<sha>`
+  tag if reproducibility matters more than staying current.
+- **It does not get you the GPU.** Containers on macOS have no Metal access,
+  so both images are CPU-only there; what you save is the emulation tax, not
+  the absence of acceleration. For Metal, run the server on the host
+  (`brew install text-embeddings-inference`) and point
+  `embedding_config.service_url` at it — it speaks the same `/embed` API, so
+  no schema change is needed. Be aware that `verify.sh` check 1 asserts every
+  Compose service is healthy, and will go red if you stop the container.
+- **Switching between the two images is safe for an existing store** — same
+  model, same float32 weights, same vector space, nothing to re-embed.
+  Switching to a different model or quantization is not; see
+  `docs/concepts.md`.
 
 ---
 
