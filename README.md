@@ -85,7 +85,7 @@ what's merely wired:
 
 | Harness | Hooks | MCP memory access | Notes |
 |---|---|---|---|
-| **Claude Code** | All 14 (9 wired by default, 5 opt-in — see `docs/hooks.md`) | Yes, via `~/.claude/.mcp.json` | Primary, most-exercised surface. |
+| **Claude Code** | All 14 (9 wired by default, 5 opt-in — see `docs/hooks.md`) | Yes, via `~/.claude.json` | Primary, most-exercised surface. |
 | **Codex CLI** | 8 of the 9 default-wired hooks fire and work there; `clear-handoff` registers but silently no-ops (Claude-only transcript shape, by design). The 5 opt-in hooks are outside this release's Codex rewiring and are unverified against Codex payloads. | Yes, via `~/.codex/config.toml` | Tool-name schemas were read from one CLI build (0.144.1); multiple Codex versions coexist in practice — see `docs/adapters.md` for exactly what's version-fragile. |
 | **Cursor** | No | No | Deliberately out of scope for this release (Q16.1) — the session-peer kit was not ported. |
 | **Claude desktop app** | No | No | Conversations stay server-side; there's no local hook or plugin surface to wire into. |
@@ -287,7 +287,7 @@ until you turn it on.
   path, see below — `sill db psql`, `sill verify`; not all
   subcommands are wired yet).
 - `sill-mcp` — the MCP server. Claude Code spawns this from
-  `~/.claude/.mcp.json`.
+  `~/.claude.json`.
 - `sill-worker` — the worker entry point used inside the Docker containers.
 
 **Plugin** (`plugin/`):
@@ -453,7 +453,7 @@ user-wide instead of per-project.
 ./uninstall.sh --keep-data   # same, but keep the volumes
 ```
 
-`uninstall.sh` deliberately does **not** edit `~/.claude/.mcp.json` or
+`uninstall.sh` deliberately does **not** edit `~/.claude.json` or
 `~/.codex/config.toml` — those may contain other servers it shouldn't
 disturb. It prints instructions for the hand-edit.
 

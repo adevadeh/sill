@@ -35,5 +35,5 @@ before it's worth keeping.
   `sill-plugin/hooks/<name>.py` — grep for `sill-plugin` to find them), and
   delete this block from this file. `./uninstall.sh` in the Sill checkout
   removes the containers and package but deliberately leaves the MCP
-  server entries in `~/.claude/.mcp.json` / `~/.codex/config.toml` alone,
+  server entries in `~/.claude.json` / `~/.codex/config.toml` alone,
   since those files may list other servers — that's a hand-edit.
