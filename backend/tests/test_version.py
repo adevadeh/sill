@@ -119,9 +119,22 @@ def test_version_flag_matches_pyproject_when_package_is_resolvable():
 # --- CHANGELOG: dated release, not "-dev — unreleased" ----------------------
 
 def test_changelog_has_no_dev_unreleased_marker():
+    """The v0.2.0 section describes a dated release, not a pending one.
+
+    Scoped to that section deliberately. The earlier form of this test read
+    everything above `## v0.1.0`, which also condemned a `## Unreleased`
+    heading sitting *above* v0.2.0 — the standard Keep a Changelog place for
+    work that has landed but not yet shipped, and the format this file's own
+    header says it follows. That made the next change to this repo, whatever
+    it turned out to be, unable to record itself without failing CI: the
+    author's choices were to leave the change undocumented or to edit a
+    released section. The claim worth holding is about the release heading,
+    so check the release heading.
+    """
     text = CHANGELOG.read_text()
     assert "v0.2.0-dev" not in text, "CHANGELOG still carries the -dev marker"
-    assert "unreleased" not in text.lower().split("## v0.1.0", 1)[0], (
+    body = text.split("## v0.2.0", 1)[-1].split("## v0.1.0", 1)[0]
+    assert "unreleased" not in body.lower(), (
         "CHANGELOG's 0.2.0 section still reads as unreleased"
     )
 
