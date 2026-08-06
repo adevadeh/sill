@@ -391,6 +391,52 @@ def format_results(memories: list[dict], conversations: list[dict]) -> str:
 # dependency shipped a new release, a spec got revised, etc). Injected as
 # reference data to cite, not a cue to perform circadian affect.
 # ---------------------------------------------------------------------------
+def parse_db_timestamp(raw: str):
+    """Parse a Postgres timestamptz into an aware datetime.
+
+    psql renders these as `2026-08-06 18:25:21.164779+00` — a *two-digit*
+    offset, which `datetime.fromisoformat` did not accept until 3.11, below
+    this project's 3.10 floor. So normalize the offset to ±HH:MM before
+    parsing rather than relying on the interpreter's leniency.
+
+    A timestamp with no offset at all is read as UTC: that is what the store
+    holds, and guessing local time would silently reintroduce the very skew
+    `memory_age_days` exists to prevent.
+    """
+    from datetime import datetime as dt, timezone
+
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("empty timestamp")
+    text = text.replace("Z", "+00:00")
+    # ...+00  ->  ...+00:00   (leave ±HH:MM and offset-less strings alone)
+    m = re.match(r"^(?P<body>.*?)(?P<sign>[+-])(?P<hh>\d{2})$", text)
+    if m:
+        text = f"{m.group('body')}{m.group('sign')}{m.group('hh')}:00"
+    parsed = dt.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def memory_age_days(created) -> int:
+    """Whole days between `created` and now, compared as instants.
+
+    The bug this replaces: the offset was split off the timestamp, leaving a
+    naive datetime that still held the *UTC* wall clock, and that was
+    subtracted from a naive *local* `datetime.now()`. Anywhere west of UTC the
+    difference went negative for anything recent — 18:25Z minus 11:25 PDT is
+    -7h, whose `.days` is -1 — so a memory stored seconds ago was labelled
+    "-1d ago" in the header the model reads on every prompt.
+
+    Clamped at zero so clock skew or a future-dated row reads as "today"
+    rather than going negative again by another route.
+    """
+    from datetime import datetime as dt, timezone
+
+    return max(0, (dt.now(timezone.utc) - created).days)
+
+
 def _humanize_gap(seconds: int) -> str:
     """Precise, compact duration — better than '6d ago'."""
     s = int(seconds)
@@ -730,9 +776,9 @@ if memories or conversations or time_header:
             age = ""
             if created:
                 try:
-                    from datetime import datetime as dt
-                    created_date = dt.fromisoformat(created.replace('+00:00', '+00:00').split('+')[0])
-                    days = (dt.now() - created_date).days
+                    from datetime import datetime as dt, timezone
+                    created_date = parse_db_timestamp(created)
+                    days = memory_age_days(created_date)
                     if days == 0:
                         age = "today"
                     elif days == 1:
