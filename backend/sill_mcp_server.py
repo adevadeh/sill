@@ -453,7 +453,12 @@ def _tools() -> list[Any]:
         ),
         _tool(
             "recall",
-            "Recall relevant memories by semantic similarity (fast_recall).",
+            "Recall relevant memories (hybrid_recall: vector + full-text, fused with RRF). "
+            "Results are ordered best-first. The `score` field is a reciprocal-rank-fusion "
+            "score, NOT a cosine similarity: it is ~0.0164 for a top hit found by one of the "
+            "two searches and ~0.0328 for one found by both, and it encodes rank rather than "
+            "match quality. Judge relevance from the content and the ordering; do not read a "
+            "small score as a weak match, and do not threshold it as if it were 0..1.",
             {
                 "type": "object",
                 "properties": {

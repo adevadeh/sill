@@ -64,7 +64,11 @@ class Memory:
     content: str
     importance: float
     relevance_score: float | None = None
-    similarity: float | None = None
+    # Rank-fusion score from hybrid_recall, NOT a cosine similarity. RRF with
+    # k=60: 1/(60+vector_rank) + 1/(60+fts_rank), so a top hit matched by one
+    # list alone scores ~0.0164 and by both ~0.0328. The number carries rank,
+    # not match quality — do not threshold it as if it were a [0..1] score.
+    score: float | None = None
     source: str | None = None  # retrieval source: 'vector', 'association', 'temporal'
     trust_level: float | None = None  # epistemic trust [0..1] (DB-computed)
     source_attribution: dict[str, Any] | None = None  # primary provenance (DB-stored JSON)
@@ -96,7 +100,7 @@ class MemoryPreview:
     type: MemoryType
     preview: str  # First ~100 chars of content
     importance: float
-    similarity: float | None = None
+    score: float | None = None  # hybrid_recall RRF score — see Memory.score
     created_at: datetime | None = None
     concepts: list[str] | None = None
 
@@ -394,7 +398,7 @@ class CognitiveMemory:
                         type=mt,
                         preview=row["preview"] + ("..." if len(row["preview"]) >= preview_length else ""),
                         importance=float(row["importance"]),
-                        similarity=float(row["score"]) if row["score"] else None,
+                        score=float(row["score"]) if row["score"] else None,
                         created_at=row["created_at"],
                         concepts=list(row["concepts"]) if row["concepts"] else None,
                     )
@@ -1200,7 +1204,7 @@ class CognitiveMemory:
                     type=mt,
                     content=row["content"],
                     importance=float(row["importance"]),
-                    similarity=float(row["score"]),
+                    score=float(row["score"]),
                     source=row["source"],
                     trust_level=float(row["trust_level"]) if row["trust_level"] is not None else None,
                     source_attribution=_coerce_json(row["source_attribution"]) if row["source_attribution"] is not None else None,
@@ -1437,7 +1441,7 @@ def format_context_for_prompt(context: HydratedContext, *, max_memories: int = 5
     if context.memories:
         parts.append("## Relevant Memories")
         for m in context.memories[:max_memories]:
-            score = f" (score: {m.similarity:.2f})" if m.similarity is not None else ""
+            score = f" (score: {m.score:.4f})" if m.score is not None else ""
             trust = f", trust: {m.trust_level:.2f}" if m.trust_level is not None else ""
             src_kind = ""
             if m.source_attribution and isinstance(m.source_attribution, dict):
