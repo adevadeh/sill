@@ -174,7 +174,7 @@ broken test.
 | `tool_kind(payload)` | hook payload | `"shell"` \| `"write"` \| `"edit"` \| `"read"` \| `"mcp"` \| `"other"` | The mapping the divergence table's "Tool names" row is built from. |
 | `mcp_tool_name(payload)` | hook payload | flat `mcp__server__tool` or `None` | Both harnesses' **hook payloads** already flatten MCP names — this just reads the field. |
 | `join_mcp_name(record)` | transcript record (`{namespace, name}` or `{name}`) | flat `mcp__server__tool` or `None` | For the surface `mcp_tool_name` does NOT cover: Codex **transcripts** split MCP names into `namespace` + `name`. Joins with `"__"` only when a namespace is present, so a non-MCP call like `{"name": "exec"}` passes through unchanged. |
-| `shell_command(payload)` | hook payload | the command string or `None` | Reads `tool_input.command` for `Bash`/`exec`/`exec_command` alike. |
+| `shell_command(payload)` | hook payload | the command as scannable text, or `None` | Reads whichever key that tool uses — `command` for `Bash`/`shell`/`shell_command`, `cmd` for `exec_command` — and renders an argv list one element per line (see the Shell command key row above). |
 | `written_path(payload)` | hook payload | the target path or `None` | `Write`/`Edit`/`MultiEdit`'s `file_path`, or `apply_patch`'s path parsed out of its patch body's own `*** Update File: <path>` / `*** Add File: <path>` header line (Codex's `apply_patch` has no separate `file_path` field at all). Unparseable → `None`, never a guess. |
 | `written_text(payload)` | hook payload | the introduced text or `None` | `Write`'s full content, `Edit`'s `new_string`, `MultiEdit`'s `new_string`s newline-joined, or `apply_patch`'s added (`+`) lines — scoped to the *first* file's header only, so a multi-file patch can't leak file B's content into a check scoped to file A. |
 | `written_files(payload)` | hook payload | `[(path, added_text), ...]` | The multi-file-safe form of `written_path`/`written_text` together: one pair per `apply_patch` file header (each text scoped to only that file), or the single `(path, text)` pair for `Write`/`Edit`/`MultiEdit`. Exists because a caller gating an in-scope check on `written_path()` alone before ever reading `written_text()` judges an entire multi-file patch by its first file only — `state-language-check.py`, `stored-slot-guard.py`, and `tool-type-witness.py` all iterate this instead for exactly that reason. |
@@ -194,14 +194,15 @@ to confirm, not a given.
 
 | Aspect | Claude Code | Codex | Normalized by |
 |---|---|---|---|
-| Shell tool name | `Bash` | `exec` (as a `custom_tool_call` transcript record) / `exec_command` (as a `function_call` record) — **the same action, two different names, in two different record types** | `tool_kind` → `"shell"`, `shell_command` |
+| Shell tool name | `Bash` | **four** names, in two record types: `exec` (a `custom_tool_call`) and `exec_command` / `shell` / `shell_command` (all `function_call`s) — the same action spelled four ways. Census counts in the section below | `tool_kind` → `"shell"`, `shell_command` |
+| Shell command key | `tool_input.command`, a string | **varies by tool**: `exec_command` → `cmd` (string); `shell` → `command` (an **argv list**, `['bash','-lc','ls']`); `shell_command` → `command` (string); `exec` → the record's `input`, a string of JavaScript, not a shell line | `shell_command` tries `_COMMAND_KEYS` in order and renders an argv list for scanning (`_command_value`) |
 | Write tool name | `Write` | `apply_patch` — always classified `"write"`, never `"edit"`, even for an `*** Update File:` body | `tool_kind`, `written_path`, `written_text` |
 | Edit tool name | `Edit` / `MultiEdit` | *(no direct equivalent — `apply_patch` covers this too)* | `tool_kind` → `"edit"` for Claude only |
 | Read tool name | `Read` | `view_image` | `tool_kind` → `"read"` |
 | MCP naming, hook-payload surface | flat `mcp__server__tool` | flat `mcp__server__tool` (already normalized on this surface — no divergence here) | `mcp_tool_name` (pass-through) |
 | MCP naming, transcript surface | flat `mcp__server__tool` (a `tool_use` block's `name`) | **split**: `namespace: "mcp__sill"` + `name: "recall_batch"` on a `function_call` record | `join_mcp_name` — a bare `f"{namespace}{name}"` concatenation (the pre-fix code) silently produced `mcp__sillrecall_batch` |
 | Transcript envelope | `{type, timestamp, sessionId, cwd, message: {role, content: [...]}}` | `{timestamp, type, payload}`, where `payload.type` is `"response_item"`'s inner kind (`function_call`, `function_call_output`, `custom_tool_call`, `message`) | `iter_transcript_tool_uses` |
-| Transcript tool-call record | `type=="assistant"` → `message.content[]` blocks with `type=="tool_use"` (`id`, `name`, `input` already flat) | `type=="response_item"`, `payload.type=="function_call"` (`id` from `call_id`, `name` via `join_mcp_name`, `input` from a JSON-**encoded-string** `arguments` field) **or** `payload.type=="custom_tool_call"` (`id` from `call_id`, `name`, `input` taken as-is — unverified field shape, see below) | `iter_transcript_tool_uses` |
+| Transcript tool-call record | `type=="assistant"` → `message.content[]` blocks with `type=="tool_use"` (`id`, `name`, `input` already flat) | `type=="response_item"`, `payload.type=="function_call"` (`id` from `call_id`, `name` via `join_mcp_name`, `input` from a JSON-**encoded-string** `arguments` field) **or** `payload.type=="custom_tool_call"` (`id` from `call_id`, `name`, `input` taken as-is — field shape confirmed by the v0.2.1 census; some records also carry `id`/`status`, ignored) | `iter_transcript_tool_uses` |
 | Tool-result record | `type=="user"` → `message.content[]` blocks with `type=="tool_result"` (`tool_use_id`, `content`) | `type=="response_item"`, `payload.type=="function_call_output"` (`call_id`, `output`) | `track-reuse.py`'s own walker (not `_harness.py` — it needs results, not just uses) |
 | `apply_patch` path encoding | n/a | no `file_path` field — the path is the first `*** Update File: <path>` / `*** Add File: <path>` line inside `tool_input.input`'s patch body text | `written_path`'s `_parse_patch_path` |
 | Assistant text on `Stop` | requires a transcript read (`get_response_text` walks the file) | handed directly as `last_assistant_message` | `assistant_text`; also read ad hoc by `response-patterns.py`/`track-reuse.py` |
@@ -217,6 +218,35 @@ than trusting this table indefinitely:
 ```bash
 grep -n "_SHELL_NAMES\|_WRITE_NAMES\|_EDIT_NAMES\|_READ_NAMES" plugin/hooks/_harness.py
 ```
+
+That shows what the code *believes*. To check what Codex actually sends,
+census your own rollouts — this is how v0.2.1 found three of the table's
+rows wrong, and it beats reasoning about what the tool "should" send:
+
+```bash
+python3 - <<'EOF'
+import json, pathlib, collections
+keys = collections.defaultdict(collections.Counter)
+for f in pathlib.Path.home().joinpath(".codex/sessions").rglob("*.jsonl"):
+    for line in f.open(encoding="utf-8", errors="replace"):
+        try: p = json.loads(line).get("payload") or {}
+        except Exception: continue
+        if p.get("type") not in ("function_call", "custom_tool_call"): continue
+        a = p.get("arguments") or p.get("input")
+        if isinstance(a, str):
+            try: a = json.loads(a)
+            except Exception: pass
+        shape = tuple(sorted(a)) if isinstance(a, dict) else type(a).__name__
+        keys[p.get("name")][shape] += 1
+for name, shapes in sorted(keys.items(), key=lambda kv: -sum(kv[1].values())):
+    print(name, dict(shapes.most_common(3)))
+EOF
+```
+
+A tool name printed here that `_SHELL_NAMES` (or the write/edit/read
+sets) doesn't contain is a call every guard is currently ignoring; an
+argument key that `_COMMAND_KEYS` doesn't list is a command no guard can
+read. Both were true before v0.2.1.
 
 ---
 
@@ -285,15 +315,21 @@ in practice, and Codex Desktop's hook behavior has not been checked at
 all. Treat the following as **claims about that one build**, not as
 permanent facts about Codex:
 
-- The exact tool names (`exec`, `exec_command`, `apply_patch`,
-  `view_image`, and the `collaboration.*`/`web.run`/`update_plan` family
-  that fall through to `"other"`).
-- `custom_tool_call`'s field shape (`call_id`, `name`, `input`) —
-  flagged as **unverified** against a real Codex transcript sample since
-  this module was first written (Plan 4 Task 1's report), and still
-  unverified as of this document. `function_call`'s shape, by contrast,
-  is exercised against real recall/hydrate traffic in this repo's own
-  history and is on firmer ground.
+- The exact tool names (`exec`, `exec_command`, `shell`, `shell_command`,
+  `apply_patch`, `view_image`, and the `collaboration.*`/`web.run`/
+  `update_plan` family that fall through to `"other"`). Which of these a
+  session emits varies by build and by config: the census below found all
+  four shell spellings across its 309 transcripts.
+- `custom_tool_call`'s field shape (`call_id`, `name`, `input`) — carried
+  as **unverified** from Plan 4 Task 1 until the v0.2.1 census
+  **confirmed** it: 1,314 real records, `input` always a string, names
+  `exec` (1,188) and `apply_patch` (126). Some records add `id` and
+  `status` fields, which `iter_transcript_tool_uses` ignores.
+- What `exec`'s `input` string *contains* is not a shell line — it is a
+  JavaScript program that calls other tools
+  (`await Promise.all([tools.exec_command({cmd: "…"})…`). `shell_command`
+  returns it anyway, which is right for consumers that scan for a
+  command's text, but it is script text, not an argv.
 - Whether a Codex `UserPromptSubmit` payload's fields beyond `turn_id`
   genuinely match Claude's (assumed here because
   `plugin/codex.hooks.json.template` already wires `spontaneous-recall.py`
@@ -381,8 +417,9 @@ Said plainly, because a green conformance suite is easy to over-read:
   `backend/tests/fixtures/codex-rollout.jsonl` are **hand-written**
   against the schemas in the divergence table above, not captured from a
   live session — see "What's version-fragile" for exactly which parts of
-  those schemas are solid vs. best-effort. `custom_tool_call` in
-  particular has never been checked against a real Codex transcript.
+  those schemas are solid vs. best-effort. The v0.2.1 census (below)
+  confirmed the record *shapes* against 309 real transcripts; the
+  fixtures themselves are still hand-written to match.
 - **It does not prove** the *inject* slot's Codex behavior beyond
   "the hook doesn't crash and returns the right JSON shape when handed a
   plausible payload" — there is no live Codex database or session behind

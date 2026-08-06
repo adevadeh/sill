@@ -9,8 +9,9 @@ resolve. Both payloads corrupt the command without raising an error the
 operator is likely to notice.
 
 Fires on both harnesses via _harness.tool_kind/shell_command: Claude's
-Bash and Codex's exec/exec_command all normalize to "shell" (see
-_harness.py for the tool-name mapping). Fails open — exits 0, no
+Bash and Codex's exec/exec_command/shell/shell_command all normalize to
+"shell", and each tool's own command key (and `shell`'s argv list) is
+read there too (see _harness.py for the mapping and its specimen counts). Fails open — exits 0, no
 output — if _harness itself cannot be imported, rather than crash or
 silently fall back to a Claude-only string match.
 """

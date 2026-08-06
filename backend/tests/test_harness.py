@@ -1,6 +1,7 @@
 """Harness normalization. Pure functions over payload dicts; no I/O."""
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -36,6 +37,76 @@ CODEX_MULTI_FILE_PATCH = {"tool_name": "apply_patch",
 def test_shell_kind_across_both_harnesses(payload):
     assert h.tool_kind(payload) == "shell"
     assert h.shell_command(payload) == "echo hi"
+
+
+# --- Codex shell shapes, ground-truthed against real rollouts --------------
+#
+# Everything above was written against hand-derived schemas. These cases come
+# from a census of 309 real Codex rollout transcripts under ~/.codex/sessions
+# (2026-08-06), which contradicted three of those derivations:
+#
+#   exec_command   1246/1246 carry the command under "cmd", never "command",
+#                  always a plain string.
+#   shell           314/314 carry "command" as an ARGV LIST (['bash','-lc',…]).
+#   shell_command   355/355 carry "command" as a string.
+#
+# So `shell` and `shell_command` were not in _SHELL_NAMES at all (669 real
+# calls classified as "other"), and exec_command's command was unreadable
+# (1246 real calls yielding None) — on the harness the guards are documented
+# to support. Content is synthesized here; only the key/value SHAPES are
+# taken from the census.
+
+CODEX_EXEC_CMD_REAL = {"tool_name": "exec_command",
+                       "tool_input": {"cmd": "echo hi", "workdir": "/tmp",
+                                      "yield_time_ms": 250, "max_output_tokens": 4096}}
+CODEX_SHELL_REAL = {"tool_name": "shell",
+                    "tool_input": {"command": ["bash", "-lc", "echo hi"],
+                                   "workdir": "/tmp"}}
+CODEX_SHELL_COMMAND_REAL = {"tool_name": "shell_command",
+                            "tool_input": {"command": "echo hi", "workdir": "/tmp"}}
+
+
+@pytest.mark.parametrize("payload", [
+    CODEX_EXEC_CMD_REAL, CODEX_SHELL_REAL, CODEX_SHELL_COMMAND_REAL,
+], ids=["exec_command-cmd", "shell-argv-list", "shell_command-string"])
+def test_real_codex_shell_shapes_classify_and_yield_their_command(payload):
+    assert h.tool_kind(payload) == "shell"
+    got = h.shell_command(payload)
+    assert got is not None, "a real Codex shell call yielded no command text"
+    assert "echo hi" in got
+
+
+def test_argv_list_command_is_rendered_for_scanning_not_dropped():
+    """`shell`'s argv list is rendered one element per LINE — every guard
+    downstream does substring/regex work on this string, so a list must not
+    read as "no command"."""
+    assert h.shell_command(CODEX_SHELL_REAL) == "bash\n-lc\necho hi"
+
+
+def test_argv_rendering_keeps_the_script_element_in_command_position():
+    """Space-joining an argv fabricates a shell line nobody ran: 'bash -lc'
+    + 'echo === && ls' reads as `bash -lc echo === && ls`, where `echo` is
+    no longer in command position and shell-idiom-guard's trap regex —
+    which anchors on command position, correctly — stops seeing a real
+    trap. One element per line keeps the script element at a line start.
+    (test_guards_on_both_harnesses.py::…[codex-shell] is the end-to-end
+    half of this; this pins the rendering that makes it work.)"""
+    payload = {"tool_name": "shell",
+               "tool_input": {"command": ["bash", "-lc", "echo === && ls"]}}
+    rendered = h.shell_command(payload)
+    trap = re.compile(r"(?:^|[;&|`(]\s*)echo\s+=\S", re.MULTILINE)
+    assert trap.search(rendered), rendered
+
+
+def test_command_key_precedence_and_junk_values():
+    """"command" wins when both keys are present; a value of a type neither
+    string nor list yields None rather than a stringified dict."""
+    assert h.shell_command({"tool_name": "exec_command",
+                            "tool_input": {"command": "first", "cmd": "second"}}) == "first"
+    assert h.shell_command({"tool_name": "shell",
+                            "tool_input": {"command": {"not": "a command"}}}) is None
+    assert h.shell_command({"tool_name": "shell",
+                            "tool_input": {"command": []}}) is None
 
 
 @pytest.mark.parametrize("payload", [CLAUDE_WRITE, CODEX_PATCH])
@@ -155,6 +226,20 @@ def test_mcp_name_is_joined_correctly_from_a_split_transcript_record():
     rec = {"namespace": "mcp__sill", "name": "recall_batch"}
     assert h.join_mcp_name(rec) == "mcp__sill__recall_batch"
     assert h.join_mcp_name({"name": "exec"}) == "exec"
+
+
+def test_mcp_join_does_not_double_a_separator_the_namespace_already_carries():
+    """Real rollouts spell the namespace both ways: "mcp__sill" (23 calls)
+    and "mcp__episodic_memory__"/"mcp__agi_memory__" (45 calls) — the latter
+    already ends in the separator, so appending another produced four
+    underscores (mcp__episodic_memory____search). Current consumers filter
+    by substring so it never surfaced, but any exact-name match would miss."""
+    assert h.join_mcp_name(
+        {"namespace": "mcp__episodic_memory__", "name": "search"}
+    ) == "mcp__episodic_memory__search"
+    assert h.join_mcp_name(
+        {"namespace": "mcp__agi_memory__", "name": "remember"}
+    ) == "mcp__agi_memory__remember"
 
 
 def test_assistant_text_prefers_the_direct_field():

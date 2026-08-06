@@ -27,12 +27,18 @@ Slot -> where its proof lives:
 
 Honesty note (see docs/adapters.md, "What this contract does and doesn't
 prove"): the two fixtures are HAND-WRITTEN to match schemas ground-truthed
-against one Codex build, not captured from a live Codex session.
-custom_tool_call's field shape in particular is best-effort — flagged as
-unverified since Task 1's report and still unverified here. This file
+against one Codex build, not captured from a live Codex session. This file
 proves the CONTRACT (both harnesses' fixture shapes normalize/behave
 identically to each other); it does not prove either fixture is byte-
 accurate to what a real session of that harness would produce.
+
+custom_tool_call's field shape, carried as unverified from Task 1's report
+through v0.2.0, was CONFIRMED by the v0.2.1 census of 309 real rollouts
+(1,314 records; call_id/name/input, input always a string). That census
+also falsified three shapes the hand-derivation got wrong — see
+backend/tests/test_harness.py's Codex shell-shape section — which is the
+standing argument for censusing real transcripts rather than extending
+these fixtures by inference.
 """
 
 import importlib.util
@@ -224,10 +230,10 @@ def test_capture_slot_normalizes_the_shared_recall_call_identically(fixture):
 def test_capture_slot_covers_both_codex_record_shapes():
     """The brief's own caveat: Codex emits function_call (exec_command, MCP
     calls) AND custom_tool_call (exec) with a different field shape.
-    Covered here: custom_tool_call's {call_id, name, input} — unverified
-    against a real Codex transcript sample (flagged since Task 1's report;
-    see docs/adapters.md). function_call is covered by the recall_batch
-    call the parametrized test above already exercises."""
+    Covered here: custom_tool_call's {call_id, name, input} — confirmed
+    against 1,314 real records by the v0.2.1 census (see the module
+    docstring). function_call is covered by the recall_batch call the
+    parametrized test above already exercises."""
     records = list(h.iter_transcript_tool_uses(CODEX_TRANSCRIPT))
     exec_records = [r for r in records if r.get("name") == "exec"]
     assert exec_records == [{"id": "call_fixture_00", "name": "exec", "input": "ls -la"}]

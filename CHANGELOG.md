@@ -3,6 +3,61 @@
 All notable changes to Sill are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## v0.2.1 — 2026-08-06
+
+### Upgrading from v0.2.0
+
+Two of the fixes below are in `plugin/codex.hooks.json.template`'s
+**matchers**, which are copied into your project's config at install time —
+updating the code alone leaves the old matchers in place, and a `shell` /
+`shell_command` call still never reaches a hook. Re-render them:
+
+```bash
+./upgrade.sh --hooks-for <project> --hooks-only --force-hooks
+```
+
+On Codex this changes the hook commands' recorded config, so Codex will
+ask you to re-approve them (it SHA-256-pins each one — see
+`docs/adapters.md`).
+
+### Fixed
+
+Codex's tool vocabulary was derived by hand for v0.2.0. A census of 309
+real Codex rollout transcripts (`~/.codex/sessions`) falsified three parts
+of it — the procedure is in `docs/adapters.md` ("What's version-fragile"),
+and it is worth re-running against your own sessions after a Codex upgrade.
+
+- **Two Codex shell tools were invisible.** `shell` (314 calls in the
+  census) and `shell_command` (355) were in neither the hook matchers nor
+  `_SHELL_NAMES`, so `shell-idiom-guard`, `attribution-check`, and
+  `state-language-check` never saw them — the same "documented as
+  supported, inert in practice" failure v0.2.0 fixed for `exec`/
+  `exec_command`, recurring for two more names.
+- **`exec_command`'s command was unreadable.** It carries the command
+  under `cmd` (1,246/1,246 real calls), not `command`, so
+  `_harness.shell_command` returned `None` for every real call — every
+  shell-scanning hook saw an empty command on the most-used Codex shell
+  tool.
+- **`shell` passes an argv list**, not a string
+  (`['bash','-lc','echo === && ls']`, 314/314). A list read as "no
+  command" at all. It is now rendered one element per line, which keeps a
+  `-c`/`-lc` script element in command position — space-joining it would
+  fabricate a shell line nobody ran and hide a real `echo =` trap from
+  `shell-idiom-guard`'s (correctly) position-anchored regex.
+- **`join_mcp_name` doubled the separator** for namespaces that already
+  end in one: `mcp__episodic_memory__` + `search` produced
+  `mcp__episodic_memory____search`. Current consumers filter by substring,
+  so nothing misbehaved; an exact-name match would have missed.
+
+### Confirmed
+
+- `custom_tool_call`'s field shape (`call_id`/`name`/`input`), carried as
+  **unverified** since the adapter work began, is confirmed by the same
+  census: 1,314 records, `input` always a string, names `exec` (1,188) and
+  `apply_patch` (126). Also recorded, because it is not guessable:
+  `exec`'s `input` is a JavaScript program that calls other tools, not a
+  shell line.
+
 ## v0.2.0 — 2026-08-05
 
 ### Upgrading from v0.1.0

@@ -119,7 +119,7 @@ project-scoped entries in the same run.
 
 **Avoiding matcher conflicts.** Sill's `PreToolUse` matchers
 target memory-storage tools and (for state-language-check)
-`Bash|exec|exec_command|apply_patch|Edit|Write` — the union of Claude's
+`Bash|exec|exec_command|shell|shell_command|apply_patch|Edit|Write` — the union of Claude's
 and Codex's tool names for the same shell/write/edit actions (see
 `_harness.py`). If your hook uses a narrower or
 unrelated matcher, there's no conflict. If you want to gate one

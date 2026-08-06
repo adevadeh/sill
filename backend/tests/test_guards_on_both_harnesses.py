@@ -19,11 +19,26 @@ def run(hook, payload, env_extra=None):
 
 TRAP = "echo === && ls"
 
+# The four Codex payloads below carry the tool names and command keys the
+# v0.2.1 rollout census found in real traffic (exec_command → "cmd";
+# shell → an argv list under "command"; shell_command → a string under
+# "command"), not the uniform tool_input.command this file assumed through
+# v0.2.0 — a shape Codex never sends for exec_command. Caveat kept honest:
+# the census read TRANSCRIPTS, so the tool names and argument keys are
+# ground truth while their appearance in a PreToolUse payload's tool_input
+# is inference (a captured live Codex PreToolUse payload would settle it).
+
 @pytest.mark.parametrize("payload", [
     {"tool_name": "Bash", "tool_input": {"command": TRAP}},
     {"tool_name": "exec", "tool_input": {"command": TRAP}, "turn_id": "t1"},
-    {"tool_name": "exec_command", "tool_input": {"command": TRAP}, "turn_id": "t1"},
-])
+    {"tool_name": "exec_command", "tool_input": {"cmd": TRAP, "workdir": "/tmp"},
+     "turn_id": "t1"},
+    {"tool_name": "shell", "tool_input": {"command": ["bash", "-lc", TRAP]},
+     "turn_id": "t1"},
+    {"tool_name": "shell_command", "tool_input": {"command": TRAP, "workdir": "/tmp"},
+     "turn_id": "t1"},
+], ids=["claude-bash", "codex-exec", "codex-exec_command", "codex-shell",
+        "codex-shell_command"])
 def test_shell_guard_denies_the_trap_on_both_harnesses(payload):
     r = run("shell-idiom-guard.py", payload)
     assert r.returncode == 0
@@ -103,8 +118,10 @@ ATTRIBUTION_CONTENT = "You wrote this and I concluded it holds up."
 @pytest.mark.parametrize("payload", [
     {"tool_name": "Bash", "tool_input": {"command": f'sill.py notice "{ATTRIBUTION_CONTENT}"'}},
     {"tool_name": "exec_command", "turn_id": "t1",
-     "tool_input": {"command": f'sill.py notice "{ATTRIBUTION_CONTENT}"'}},
-])
+     "tool_input": {"cmd": f'sill.py notice "{ATTRIBUTION_CONTENT}"', "workdir": "/tmp"}},
+    {"tool_name": "shell", "turn_id": "t1",
+     "tool_input": {"command": ["bash", "-lc", f'sill.py notice "{ATTRIBUTION_CONTENT}"']}},
+], ids=["claude-bash", "codex-exec_command", "codex-shell"])
 def test_attribution_check_flags_the_same_claims_on_both_harnesses(payload):
     r = run("attribution-check.py", payload)
     assert r.returncode == 0
@@ -122,7 +139,12 @@ STATE_CONTENT = "I am feeling tired and need a break after this long session."
                                           "content": STATE_CONTENT + "\n"}},
     {"tool_name": "apply_patch", "turn_id": "t1",
      "tool_input": {"input": f"*** Update File: journal/r-1.md\n+{STATE_CONTENT}\n"}},
-])
+    # The shell branch too — this hook scans mint commands, and on real
+    # Codex traffic that command sits under "cmd" (see the census note above).
+    {"tool_name": "Bash", "tool_input": {"command": f'sill.py notice "{STATE_CONTENT}"'}},
+    {"tool_name": "exec_command", "turn_id": "t1",
+     "tool_input": {"cmd": f'sill.py notice "{STATE_CONTENT}"', "workdir": "/tmp"}},
+], ids=["claude-write", "codex-apply_patch", "claude-bash", "codex-exec_command"])
 def test_state_language_check_flags_the_same_matches_on_both_harnesses(payload):
     r = run("state-language-check.py", payload)
     assert r.returncode == 0

@@ -277,9 +277,9 @@ never blocked:
   matter for your own project.
 
 **When it fires:** `PreToolUse` matching
-`mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command`
-(`exec`/`exec_command` are Codex's shell tool names; see `_harness.py`
-for the full harness-normalization mapping).
+`mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|shell|shell_command`
+(`exec`/`exec_command`/`shell`/`shell_command` are Codex's four shell
+tool names; see `_harness.py` for the full harness-normalization mapping).
 
 **Env vars:**
 
@@ -421,7 +421,8 @@ its force/speaker tags.
 
 Both checks read the session transcript, whose schema differs by
 harness, so both go through `_harness.py`: `tool_kind` classifies
-Claude's `Bash` and Codex's `exec`/`exec_command` alike as shell calls,
+Claude's `Bash` and Codex's `exec`/`exec_command`/`shell`/`shell_command`
+alike as shell calls,
 and the whole-session check walks either schema via
 `iter_transcript_tool_uses`. Until they did, they matched only Claude's
 `assistant`/`tool_use` shape and the literal tool name `Bash` — so on
@@ -494,9 +495,10 @@ hook is non-blocking; it just asks "do you have the state you're
 describing, or are you matching human convention?"
 
 **When it fires:** `PreToolUse` matching
-`mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|apply_patch|Edit|Write`
-(`exec`/`exec_command`/`apply_patch` are Codex's shell/write tool names;
-see `_harness.py` for the full harness-normalization mapping).
+`mcp__sill__(remember|remember_batch|remember_batch_raw)|Bash|exec|exec_command|shell|shell_command|apply_patch|Edit|Write`
+(`exec`/`exec_command`/`shell`/`shell_command`/`apply_patch` are Codex's
+shell/write tool names; see `_harness.py` for the full
+harness-normalization mapping).
 
 **Env vars:** `SILL_PROJECT_ROOT` (default `cwd`), `SILL_LOG_DIR`
 (default `/tmp`), `SILL_BEAT_JOURNAL_DIRS` (default unset — see scope
@@ -529,8 +531,9 @@ or `additionalContext`. (The other two, `stored-slot-guard` and
 `tool-type-witness` below, guard mint receipts instead of shell
 commands.)
 
-**When it fires:** `PreToolUse` matching `Bash|exec|exec_command`
-(Claude's `Bash` plus Codex's two shell tool names). Timeout: 10s. This
+**When it fires:** `PreToolUse` matching
+`Bash|exec|exec_command|shell|shell_command` (Claude's `Bash` plus
+Codex's four shell tool names). Timeout: 10s. This
 matcher is independent of `attribution-check`'s and
 `state-language-check`'s own `Bash`-inclusive matchers — all three
 fire on the same shell call. That's expected: see `docs/extending.md`'s
@@ -539,7 +542,8 @@ fire on the same shell call. That's expected: see `docs/extending.md`'s
 **Env vars:** none.
 
 **How to disable:** remove the `PreToolUse` entry (matcher
-`Bash|exec|exec_command`) whose command is `shell-idiom-guard.py`.
+`Bash|exec|exec_command|shell|shell_command`) whose command is
+`shell-idiom-guard.py`.
 
 **Canned test:**
 

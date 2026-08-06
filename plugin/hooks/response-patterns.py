@@ -23,8 +23,9 @@ session_has_deliberate_mint) read the session transcript, which has a
 different schema per harness — Claude Code's assistant/tool_use blocks vs
 Codex's response_item/function_call records. Both go through _harness so
 the checks fire on either: tool_kind classifies Claude's Bash and Codex's
-exec/exec_command alike as "shell" (a literal "Bash" test is what made
-this dead on Codex), and iter_transcript_tool_uses reads both schemas.
+exec/exec_command/shell/shell_command alike as "shell" (a literal "Bash"
+test is what made this dead on Codex), and iter_transcript_tool_uses
+reads both schemas.
 Fails safe — treats the session as already-minted, suppressing the
 auto-store — if _harness itself cannot be imported.
 """
@@ -528,10 +529,11 @@ def _is_deliberate_store(tool_name: str, tool_input) -> bool:
     check is blind to it, which is one way an echo can slip past suppression.
 
     "Shell" is decided by _harness.tool_kind, not by a literal "Bash" test:
-    Codex spells the same call exec/exec_command, so the old name test made
-    this detector — and therefore the whole echo suppression — permanently
-    False on Codex sessions, even though this hook is registered on Stop for
-    both harnesses (plugin/codex.hooks.json.template).
+    Codex spells the same call exec/exec_command/shell/shell_command, so the
+    old name test made this detector — and therefore the whole echo
+    suppression — permanently False on Codex sessions, even though this hook
+    is registered on Stop for both harnesses
+    (plugin/codex.hooks.json.template).
     """
     if not isinstance(tool_name, str) or not tool_name:
         return False

@@ -87,14 +87,29 @@ CLAUDE_MINT_TRANSCRIPT = "\n".join([
 ]) + "\n"
 
 # Codex spells the same call exec_command: a response_item/function_call whose
-# arguments arrive as a JSON-encoded string.
+# arguments arrive as a JSON-encoded string, keyed "cmd" — not "command", the
+# key this fixture asserted until the rollout census (309 real transcripts,
+# 2026-08-06) showed 1246/1246 real calls using "cmd". The old shape passed
+# while real Codex sessions went undetected.
 CODEX_MINT_TRANSCRIPT = "\n".join([
     json.dumps({"type": "response_item", "payload": {
         "type": "message", "role": "user",
         "content": [{"type": "input_text", "text": "please store that"}]}}),
     json.dumps({"type": "response_item", "payload": {
         "type": "function_call", "call_id": "call_1", "name": "exec_command",
-        "arguments": json.dumps({"command": MINT_CMD})}}),
+        "arguments": json.dumps({"cmd": MINT_CMD, "workdir": "/tmp",
+                                 "yield_time_ms": 250})}}),
+]) + "\n"
+
+# Codex's `shell`: same logical call, argv list under "command".
+CODEX_SHELL_MINT_TRANSCRIPT = "\n".join([
+    json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "user",
+        "content": [{"type": "input_text", "text": "please store that"}]}}),
+    json.dumps({"type": "response_item", "payload": {
+        "type": "function_call", "call_id": "call_1", "name": "shell",
+        "arguments": json.dumps({"command": ["bash", "-lc", MINT_CMD],
+                                 "workdir": "/tmp"})}}),
 ]) + "\n"
 
 # Codex's other shape for a shell call: exec arrives as a custom_tool_call
@@ -145,9 +160,11 @@ def _transcript(tmp_path, text):
 @pytest.mark.parametrize("transcript", [
     CLAUDE_MINT_TRANSCRIPT,
     CODEX_MINT_TRANSCRIPT,
+    CODEX_SHELL_MINT_TRANSCRIPT,
     CODEX_EXEC_MINT_TRANSCRIPT,
     CODEX_MCP_MINT_TRANSCRIPT,
-], ids=["claude-bash", "codex-exec_command", "codex-exec", "codex-mcp-remember"])
+], ids=["claude-bash", "codex-exec_command", "codex-shell", "codex-exec",
+        "codex-mcp-remember"])
 def test_deliberate_mint_is_seen_on_both_harnesses(transcript, tmp_path):
     data = _transcript(tmp_path, transcript)
     assert rp.has_remember_call(data), "turn-scoped check missed the mint"

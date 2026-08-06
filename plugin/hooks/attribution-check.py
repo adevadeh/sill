@@ -19,7 +19,8 @@ to /tmp/attribution-check.log.
 
 The Bash/sill.py-notice branch of extract_content() fires on both harnesses
 via _harness.tool_kind/shell_command: Claude's Bash and Codex's exec/
-exec_command both normalize to "shell" kind (see _harness.py). The MCP
+exec_command/shell/shell_command all normalize to "shell" kind, and each
+tool's own command key is read there (see _harness.py). The MCP
 branches (remember/remember_batch) already worked on both harnesses before
 this — hook payloads flatten an MCP tool name to "mcp__server__tool" on
 both Claude Code and Codex, and is_tool_name() matches by suffix. Fails

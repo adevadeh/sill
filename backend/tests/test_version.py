@@ -22,7 +22,7 @@ PYPROJECT = BACKEND_ROOT / "pyproject.toml"
 PLUGIN_JSON = REPO_ROOT / "plugin" / "plugin.json"
 CHANGELOG = REPO_ROOT / "CHANGELOG.md"
 
-EXPECTED_VERSION = "0.2.0"
+EXPECTED_VERSION = "0.2.1"
 
 
 def _pyproject_version() -> str:
@@ -38,13 +38,13 @@ def _plugin_json_version() -> str:
     return data["version"]
 
 
-# --- Step 1: pyproject.toml and plugin.json both read 0.2.0 -----------------
+# --- Step 1: pyproject.toml and plugin.json both read the current version -----------------
 
-def test_pyproject_version_is_0_2_0():
+def test_pyproject_version_matches_expected():
     assert _pyproject_version() == EXPECTED_VERSION
 
 
-def test_plugin_json_version_is_0_2_0():
+def test_plugin_json_version_matches_expected():
     assert _plugin_json_version() == EXPECTED_VERSION
 
 

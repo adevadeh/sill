@@ -2,10 +2,19 @@
 
 Every hook that used to string-match "Bash", "Write", "Edit", "Read" — the
 Claude-only tool names — silently never fired on Codex, whose PreToolUse
-payloads carry "exec"/"exec_command" (shell), "apply_patch" (write), and
-"view_image" (read) instead. This module is the one place that knows both
-vocabularies, so every other hook asks it instead of rediscovering the
-mapping (or a subset of it) on its own.
+payloads carry "exec"/"exec_command"/"shell"/"shell_command" (shell),
+"apply_patch" (write), and "view_image" (read) instead. This module is the
+one place that knows both vocabularies, so every other hook asks it instead
+of rediscovering the mapping (or a subset of it) on its own.
+
+The Codex half of that vocabulary was originally derived by hand and got
+three things wrong, corrected in v0.2.1 against a census of 309 real Codex
+rollout transcripts: "shell"/"shell_command" were missing from the shell
+names entirely, exec_command keeps its command under "cmd" rather than
+"command", and `shell` passes an argv list rather than a string. Each
+constant below carries its own specimen counts; re-derive them by walking
+~/.codex/sessions/**/*.jsonl rather than by reasoning about what the tool
+"should" send.
 
 Two input shapes, not one:
 
@@ -47,7 +56,17 @@ ToolKind = Literal["shell", "write", "edit", "read", "mcp", "other"]
 # field: Claude Code's own names plus Codex's equivalents (see module
 # docstring). "mcp__"-prefixed names are matched by prefix, not
 # membership, in tool_kind below.
-_SHELL_NAMES = frozenset({"Bash", "exec", "exec_command"})
+_SHELL_NAMES = frozenset({"Bash", "exec", "exec_command", "shell", "shell_command"})
+
+# Where a shell tool keeps its command, in the order they're tried.
+# Ground-truthed against 309 real Codex rollouts (2026-08-06): exec_command
+# uses "cmd" (1246/1246, always a string) while shell/shell_command use
+# "command" (a 314/314 argv LIST for `shell`, a 355/355 string for
+# `shell_command`) — see _command_value for the list case. Claude's Bash
+# uses "command". The earlier single-key "command" read returned None for
+# every real exec_command call.
+_COMMAND_KEYS = ("command", "cmd")
+
 _WRITE_NAMES = frozenset({"Write", "apply_patch"})
 _EDIT_NAMES = frozenset({"Edit", "MultiEdit"})
 _READ_NAMES = frozenset({"Read", "view_image"})
@@ -144,9 +163,19 @@ def join_mcp_name(record: object) -> str | None:
     record that splits it into `namespace` + `name` (Codex's transcript
     shape — hook payloads are already flat; see mcp_tool_name for those).
 
-    Joins with "__" only when a namespace is present; a plain,
-    non-MCP call like {"name": "exec"} carries no namespace and passes
-    through unchanged rather than picking up a spurious separator.
+    Joins with "__" only when a namespace is present, and only when the
+    namespace doesn't already end in one: real rollouts spell it both ways
+    ("mcp__sill", but also "mcp__episodic_memory__" and "mcp__agi_memory__"),
+    and appending unconditionally produced four underscores
+    ("mcp__episodic_memory____search"). A plain, non-MCP call like
+    {"name": "exec"} carries no namespace and passes through unchanged
+    rather than picking up a spurious separator.
+
+    Not normalized here: the same server appears hyphenated in a flat name
+    ("mcp__episodic-memory__search") and underscored in a namespace
+    ("mcp__episodic_memory__"), so the two spellings don't reconcile to one
+    string. Every current consumer filters by substring, where it makes no
+    difference; an exact-match consumer would have to handle both.
     """
     try:
         d = _as_dict(record)
@@ -156,19 +185,63 @@ def join_mcp_name(record: object) -> str | None:
         if name is None:
             return None
         namespace = _as_str(d.get("namespace"))
-        return f"{namespace}__{name}" if namespace else name
+        if namespace is None:
+            return name
+        separator = "" if namespace.endswith("__") else "__"
+        return f"{namespace}{separator}{name}"
     except Exception:
         return None
 
 
+def _command_value(value: object) -> str | None:
+    """One command key's value as scannable text.
+
+    A string passes through. An argv LIST — Codex's `shell` spells every
+    call that way (['bash', '-lc', 'ls'], 314/314 in the rollout census) —
+    is joined with NEWLINES, one element per line. Dropping the list would
+    read as "no command at all"; joining with spaces would be worse than
+    that, because it fabricates a shell line nobody ran: 'bash -lc' +
+    'echo === && ls' becomes `bash -lc echo === && ls`, where `echo` is no
+    longer in command position, and shell-idiom-guard's trap regex (which
+    anchors on command position, correctly) stops seeing a trap that is
+    really there. One element per line keeps each element's content at a
+    line start — which is where a `-c`/`-lc` script element genuinely
+    begins — and every consumer's regexes already span it (`\\s` matches a
+    newline). Anything else (a dict, a number, an empty list) yields None
+    rather than a stringified guess.
+    """
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, list):
+        parts = [part for part in value if isinstance(part, str) and part]
+        return "\n".join(parts) if parts else None
+    return None
+
+
 def shell_command(payload: object) -> str | None:
-    """The shell command text, from Bash (Claude) or exec/exec_command
-    (Codex) — all three carry it under tool_input.command."""
+    """The shell command text, from Bash (Claude) or exec/exec_command/
+    shell/shell_command (Codex), whichever key that tool keeps it under —
+    see _COMMAND_KEYS for the per-tool ground truth and _command_value for
+    the argv-list case.
+
+    Note what the text IS on Codex's freeform `exec`: its input is a
+    JavaScript program that calls other tools, not a shell line (real
+    specimens read `const r = await Promise.all([tools.exec_command({cmd:
+    "…"})…`). Returning it here is still right for every current consumer
+    — they scan for a command's text, which appears verbatim inside that
+    program — but it is script text, not an argv.
+    """
     try:
         if tool_kind(payload) != "shell":
             return None
         ti = _tool_input(payload)
-        return _as_str(ti.get("command")) if ti is not None else None
+        if ti is None:
+            return None
+        for key in _COMMAND_KEYS:
+            text = _command_value(ti.get(key))
+            if text is not None:
+                return text
+        return None
     except Exception:
         return None
 
@@ -445,9 +518,12 @@ def _iter_transcript_records(path: object) -> list:
             elif itype == "custom_tool_call":
                 # Codex's freeform-input record type — exec's own shape,
                 # distinct from exec_command's function_call. Field names
-                # (call_id/name/input) follow the same convention as
-                # function_call; unverified against a real custom_tool_call
-                # transcript sample (see task report).
+                # (call_id/name/input) CONFIRMED against 1314 real records
+                # in the 2026-08-06 rollout census: names are `exec` (1188)
+                # and `apply_patch` (126), `input` is always a string, and
+                # some records add `id`/`status` fields this ignores. Note
+                # `exec`'s string is a JavaScript program calling other
+                # tools, not a shell line — see shell_command.
                 out.append({
                     "id": item.get("call_id"),
                     "name": item.get("name"),

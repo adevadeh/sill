@@ -26,8 +26,8 @@ Non-blocking. Flags for verify-or-rephrase before storage. Logs to
 /tmp/state-language-check.log.
 
 Fires on both harnesses via _harness.tool_kind/shell_command/written_files:
-Claude's Bash normalizes with Codex's exec/exec_command to "shell" kind,
-and Claude's Write/Edit normalize with Codex's apply_patch to "write"/
+Claude's Bash normalizes with Codex's exec/exec_command/shell/shell_command
+to "shell" kind, and Claude's Write/Edit normalize with apply_patch to "write"/
 "edit" kind (apply_patch always "write", even a "*** Update File:" body —
 see _harness.py). Scope and text for the write/edit branch are read per
 FILE via written_files, not written_path/written_text (which only ever
