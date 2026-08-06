@@ -3,6 +3,25 @@
 All notable changes to Sill are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Fixed
+
+- **`install.sh` step 7 could corrupt `~/.codex/config.toml`.** When the
+  file already carried a `[features]` section without a `hooks` key, the
+  merge appended a *second* `[features]` table header. TOML forbids
+  declaring a table twice, so the result was a config Codex could not
+  parse — which doesn't degrade Codex, it stops it, taking every
+  unrelated MCP server, plugin, and trusted-project entry in that file
+  down with it. Step 7 printed `updated <path>` either way. Every Codex
+  install that has ever set a feature flag was in range; the machine the
+  code was written on had no `[features]` section at all, so the merge
+  took the `else` branch and parsed fine. The key is now inserted into
+  the existing section, and — as a backstop for any section layout the
+  regexes read wrongly — the merged text is parsed before it is written,
+  with a loud refusal and hand-edit instructions if it would not.
+  Pinned by `backend/tests/test_codex_config_merge.py`.
+
 ## v0.2.0 — 2026-08-05
 
 ### Upgrading from v0.1.0

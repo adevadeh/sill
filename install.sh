@@ -314,6 +314,28 @@ import pathlib, sys, re
 path = pathlib.Path(sys.argv[1])
 text = path.read_text() if path.exists() else ""
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # 3.10, this project's floor — validation is a bonus
+    tomllib = None
+
+MANUAL = (
+    '  [mcp_servers.sill]\n'
+    '  command = "sill-mcp"\n'
+    '  # ...and hooks = true inside the existing [features] section'
+)
+
+# Don't merge into a file we can't parse: it's the operator's, it may hold
+# their whole Codex setup, and edits layered onto existing breakage only make
+# the breakage harder to attribute. Mirrors the ~/.claude.json fallback above.
+if tomllib is not None and text.strip():
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        print(f"install.sh: {path} isn't valid TOML ({exc}); leaving it alone. Add by hand:")
+        print(MANUAL)
+        sys.exit(0)
+
 def has_section(body: str, header: str) -> bool:
     pat = rf"(?ms)^\s*\[{re.escape(header)}\]\s*$"
     return re.search(pat, body) is not None
@@ -325,24 +347,51 @@ def has_key_in_section(body: str, header: str, key: str) -> bool:
         return False
     return re.search(rf"(?m)^\s*{re.escape(key)}\s*=", m.group("body")) is not None
 
+def insert_key_into_section(body: str, header: str, line: str) -> str:
+    """Put `line` directly beneath the existing [header] table header.
+
+    TOML forbids declaring a table twice, so a config that already carries a
+    [features] section cannot be extended by *appending* a second [features]
+    block — the result is a file Codex refuses to parse, which doesn't
+    degrade Codex, it stops it. Extend the section that is already there.
+    """
+    pat = rf"(?m)^([ \t]*\[{re.escape(header)}\][ \t]*)$"
+    return re.sub(pat, lambda m: m.group(1) + "\n" + line, body, count=1)
+
 additions: list[str] = []
-if not has_section(text, "mcp_servers.sill"):
+updated = text
+if not has_section(updated, "mcp_servers.sill"):
     additions.append('[mcp_servers.sill]\ncommand = "sill-mcp"\n')
-if has_section(text, "features"):
-    if not has_key_in_section(text, "features", "hooks"):
-        # Append to existing section by adding a new fully-qualified key.
-        additions.append("[features]\nhooks = true\n")
+if has_section(updated, "features"):
+    if not has_key_in_section(updated, "features", "hooks"):
+        updated = insert_key_into_section(updated, "features", "hooks = true")
 else:
     additions.append("[features]\nhooks = true\n")
 
 if additions:
-    if text and not text.endswith("\n"):
-        text += "\n"
-    text += "\n" + "\n".join(additions)
-    path.write_text(text)
-    print(f"  updated {path}")
-else:
+    if updated and not updated.endswith("\n"):
+        updated += "\n"
+    updated += "\n" + "\n".join(additions)
+
+if updated == text:
     print(f"  {path} already has sill MCP + features.hooks")
+    sys.exit(0)
+
+# Backstop for a section layout the regexes above read wrongly (a header with
+# a trailing comment, say). Warn and change nothing rather than hand Codex a
+# config it cannot read — but say so out loud, because a step that reports
+# success while wiring nothing is the exact failure this release fixed.
+if tomllib is not None:
+    try:
+        tomllib.loads(updated)
+    except tomllib.TOMLDecodeError as exc:
+        print(f"install.sh: NOT writing {path} — the merge would produce invalid TOML ({exc}).")
+        print("  Your config is unchanged and Codex is NOT wired. Add by hand:")
+        print(MANUAL)
+        sys.exit(0)
+
+path.write_text(updated)
+print(f"  updated {path}")
 PY
     fi
   else
