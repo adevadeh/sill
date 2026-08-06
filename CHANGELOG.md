@@ -40,6 +40,22 @@ All notable changes to Sill are recorded here. Format loosely follows
   regexes read wrongly — the merged text is parsed before it is written,
   with a loud refusal and hand-edit instructions if it would not.
   Pinned by `backend/tests/test_codex_config_merge.py`.
+- **Seven live references still sent readers to `~/.claude/.mcp.json`.**
+  v0.2.0 fixed the code — install.sh now registers the MCP server in
+  `~/.claude.json`, which is the file Claude Code actually reads — but the
+  docs were never swept, and the survivors sat in exactly the places
+  someone looks when debugging a server that isn't connected: README's
+  harness table, "What gets installed", and uninstall note;
+  `docs/adapters.md`'s four-slot contract table; the phase-2 remedy in
+  `docs/onboarding/01-install.md`; `uninstall.sh`'s on-screen hand-edit
+  instructions; and `plugin/claude.home.md.template`, which `--scope
+  home` installs into `~/.claude/CLAUDE.md`, teaching the dead path to
+  every session in every directory. All now name `~/.claude.json`. The
+  four deliberate mentions — this changelog, `docs/RELEASE-REHEARSAL.md`,
+  README's upgrade note contrasting the two paths, and install.sh's
+  warning comment — are unchanged, and
+  `backend/tests/test_mcp_registry_path_docs.py` sweeps the tree so the
+  distinction survives the next edit.
 
 ## v0.2.0 — 2026-08-05
 
