@@ -3,6 +3,26 @@
 All notable changes to Sill are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Added
+
+- **`SILL_BIND_ADDR` chooses which interface the published ports bind
+  to.** Default `0.0.0.0` — exactly what an unprefixed Compose mapping
+  already meant, so upgrading moves nobody's ports. The reason it is now
+  a decision rather than a default: `db` runs with
+  `POSTGRES_HOST_AUTH_METHOD=trust` and asks for no password, so reaching
+  5432 *is* superuser access to the entire memory store — plus outbound
+  HTTP from inside the container network, since the db image carries
+  `pgsql-http` — and RabbitMQ's management UI is published on 15672 with
+  the credentials from `.env.example`. Nothing in a single-host install
+  needs any of it off-box: the hooks reach Postgres by `docker exec` and
+  the MCP server connects to localhost. `SILL_BIND_ADDR=127.0.0.1` in
+  `backend/.env` closes all three. Pinned by
+  `backend/tests/test_bind_addr_override.py`, including a guard that
+  fails if a service starts publishing a fourth port without deciding
+  about its bind address.
+
 ## v0.2.0 — 2026-08-05
 
 ### Upgrading from v0.1.0
