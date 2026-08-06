@@ -7,7 +7,7 @@
 #   --help        Show this help.
 #
 # Destructive by default: drops Docker volumes, removes the backend install,
-# removes the plugin symlink. MCP config entries in ~/.claude/.mcp.json and
+# removes the plugin symlink. MCP config entries in ~/.claude.json and
 # ~/.codex/config.toml are intentionally left for the user to edit — we don't
 # want to clobber other servers they may have wired alongside sill.
 
@@ -89,10 +89,10 @@ fi
 # --- step 4: MCP entry warning -----------------------------------------------
 say "4/4: MCP entries — manual edit"
 cat <<EOF
-  We did NOT touch ~/.claude/.mcp.json or ~/.codex/config.toml. To finish
+  We did NOT touch ~/.claude.json or ~/.codex/config.toml. To finish
   uninstalling, remove the 'sill' entries by hand:
 
-    * ~/.claude/.mcp.json       : delete mcpServers.sill
+    * ~/.claude.json            : delete mcpServers.sill
     * ~/.codex/config.toml      : delete [mcp_servers.sill] (and [features].hooks
                                   if you only enabled it for sill)
 

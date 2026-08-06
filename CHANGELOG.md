@@ -20,7 +20,145 @@ On Codex this changes the hook commands' recorded config, so Codex will
 ask you to re-approve them (it SHA-256-pins each one — see
 `docs/adapters.md`).
 
+### Added
+
+- **The embeddings image and platform are operator-overridable**
+  (`EMBEDDING_IMAGE`, `EMBEDDING_PLATFORM`). Defaults are unchanged —
+  `cpu-1.8` on `linux/amd64`, byte-for-byte what v0.2.0 shipped — so an
+  operator who sets nothing sees no difference. Both were previously
+  hardcoded, which silently committed every arm64 host to running the
+  embeddings server under emulation for the life of the install; that is
+  the 903 s first boot the README already warns about, and it had no
+  remedy short of editing a tracked file. Upstream publishes a native
+  arm64 line, and `backend/.env` can now point at it. Documented in
+  `backend/.env.example` and under README → Prerequisites → "Apple
+  Silicon: the native image", including the two things that are easy to
+  get wrong: the arm64 line is built from main rather than tagged
+  releases (so it trades a pinned version for a rolling one), and it does
+  not buy Metal — containers on macOS have no GPU access, so the win is
+  the emulation tax alone. Pinned by
+  `backend/tests/test_embeddings_image_override.py`.
+- **`SILL_BIND_ADDR` chooses which interface the published ports bind
+  to.** Default `0.0.0.0` — exactly what an unprefixed Compose mapping
+  already meant, so upgrading moves nobody's ports. The reason it is now
+  a decision rather than a default: `db` runs with
+  `POSTGRES_HOST_AUTH_METHOD=trust` and asks for no password, so reaching
+  5432 *is* superuser access to the entire memory store — plus outbound
+  HTTP from inside the container network, since the db image carries
+  `pgsql-http` — and RabbitMQ's management UI is published on 15672 with
+  the credentials from `.env.example`. Nothing in a single-host install
+  needs any of it off-box: the hooks reach Postgres by `docker exec` and
+  the MCP server connects to localhost. `SILL_BIND_ADDR=127.0.0.1` in
+  `backend/.env` closes all three. Pinned by
+  `backend/tests/test_bind_addr_override.py`, including a guard that
+  fails if a service starts publishing a fourth port without deciding
+  about its bind address.
+
 ### Fixed
+
+- **`install.sh` step 7 could corrupt `~/.codex/config.toml`.** When the
+  file already carried a `[features]` section without a `hooks` key, the
+  merge appended a *second* `[features]` table header. TOML forbids
+  declaring a table twice, so the result was a config Codex could not
+  parse — which doesn't degrade Codex, it stops it, taking every
+  unrelated MCP server, plugin, and trusted-project entry in that file
+  down with it. Step 7 printed `updated <path>` either way. Every Codex
+  install that has ever set a feature flag was in range; the machine the
+  code was written on had no `[features]` section at all, so the merge
+  took the `else` branch and parsed fine. The key is now inserted into
+  the existing section, and — as a backstop for any section layout the
+  regexes read wrongly — the merged text is parsed before it is written,
+  with a loud refusal and hand-edit instructions if it would not.
+  Pinned by `backend/tests/test_codex_config_merge.py`.
+- **Seven live references still sent readers to `~/.claude/.mcp.json`.**
+  v0.2.0 fixed the code — install.sh now registers the MCP server in
+  `~/.claude.json`, which is the file Claude Code actually reads — but the
+  docs were never swept, and the survivors sat in exactly the places
+  someone looks when debugging a server that isn't connected: README's
+  harness table, "What gets installed", and uninstall note;
+  `docs/adapters.md`'s four-slot contract table; the phase-2 remedy in
+  `docs/onboarding/01-install.md`; `uninstall.sh`'s on-screen hand-edit
+  instructions; and `plugin/claude.home.md.template`, which `--scope
+  home` installs into `~/.claude/CLAUDE.md`, teaching the dead path to
+  every session in every directory. All now name `~/.claude.json`. The
+  four deliberate mentions — this changelog, `docs/RELEASE-REHEARSAL.md`,
+  README's upgrade note contrasting the two paths, and install.sh's
+  warning comment — are unchanged, and
+  `backend/tests/test_mcp_registry_path_docs.py` sweeps the tree so the
+  distinction survives the next edit.
+
+- **`recall` reported rank position in a field named `similarity`.**
+  `CognitiveMemory.recall()` selects `hybrid_recall`'s score — Reciprocal
+  Rank Fusion at k=60, `1/(60+vector_rank) + 1/(60+fts_rank)` — and
+  published it as `Memory.similarity`, which the MCP server serializes
+  straight to the model. The `recall` tool meanwhile described itself as
+  "semantic similarity (fast_recall)", naming a function it does not
+  call. Observed live on a fresh install: a query whose best answer was
+  an exact topical match returned `"similarity": 0.01639344262295082` —
+  precisely 1/61, i.e. "ranked first", carrying nothing about how well it
+  matched. An agent reading a *similarity* of 0.016 concludes the store
+  found nothing and discards a bullseye; two results of very different
+  quality at the same rank are indistinguishable. The field is now
+  `score` on both `Memory` and `MemoryPreview`, and the tool description
+  states the fusion used, that the number is not a cosine similarity, and
+  the two landmark values (~0.0164 one list, ~0.0328 both) that make it
+  legible. `format_context()` also printed it at two decimals, collapsing
+  0.0164/0.0161/0.0159 to a single "0.02"; now four.
+  `PartialActivation.cluster_similarity` and `best_memory_similarity` are
+  untouched — those really are cosine. Pinned by
+  `backend/tests/test_recall_score_semantics.py`, including a guard that
+  fails if `hybrid_recall`'s k stops being 60 and the documented numbers
+  go stale.
+
+  *Wire-format change:* anything reading `similarity` off a `recall` or
+  `recall_preview` result must read `score` instead.
+
+- **A memory stored seconds ago was labelled `-1d ago`.**
+  `spontaneous-recall.py` split the UTC offset off Postgres's timestamp
+  (`.split('+')[0]`), leaving a naive datetime that still held the *UTC*
+  wall clock, then subtracted it from a naive *local* `datetime.now()`.
+  Anywhere west of UTC that goes negative for anything recent — 18:25Z
+  minus 11:25 PDT is -7h, whose `.days` is `-1` — so the age fell through
+  the `days < 30` branch and printed `-1d ago`. Users east of UTC saw
+  ages silently inflated instead. This is the recall header the model
+  reads on *every prompt*, so it was wrong data injected into context.
+  Ages are now computed as instants in UTC and clamped at zero, so clock
+  skew cannot reintroduce a negative by another route. Timestamp parsing
+  moved into `parse_db_timestamp()`, which normalizes Postgres's
+  two-digit offset (`+00`) itself rather than relying on
+  `datetime.fromisoformat`, which did not accept it until 3.11 — below
+  this project's 3.10 floor. Pinned by
+  `backend/tests/test_recall_age_timezone.py`, including a
+  characterization test that reproduces the old arithmetic at a fixed
+  UTC-7 observer so the defect is demonstrated rather than asserted.
+
+- **`verify.sh` check 6 never ran the conformance suite on a normal
+  install.** It probed `python3 -c "import pytest"` and ran `python3 -m
+  pytest` — but `install.sh` puts the backend in a pipx venv, or in
+  `~/.local/share/sill-venv`, never in the system `python3`. So the probe
+  failed on every ordinary install, check 6 always took its degraded
+  capture-slot branch, and the full four-slot suite went unrun during
+  verification while the check still printed `pass:`. Worse, the degraded
+  branch's remedy told the operator to set `SILL_PYTHON` and install into
+  it, and check 6 never read `SILL_PYTHON` — following the printed advice
+  exactly could not change the outcome. Check 6 now resolves the
+  interpreter the way `install.sh`'s `sill_python()` does, with an
+  explicit `SILL_PYTHON` winning; it names the interpreter it chose, and
+  the fallback advice names that same resolved path (offering `pipx
+  inject` when the install is pipx-based) instead of a shell incantation
+  that only reproduces the guess. Pinned by
+  `backend/tests/test_verify_conformance_interpreter.py`, including a
+  test that fails if verify.sh's resolution order drifts from
+  install.sh's.
+
+- **The changelog-freshness test forbade an `Unreleased` section.** It
+  read everything above the v0.1.0 heading, so the standard Keep a Changelog
+  place for landed-but-unshipped work — the format this file's own header
+  claims to follow — failed CI. The next change to this repo could
+  therefore either go undocumented or edit a released section; the author
+  of the Codex-vocabulary fixes below hit exactly that bind and cut a
+  version number to escape it. The assertion is now scoped to the v0.2.0
+  section, which is what it was ever really about.
 
 Codex's tool vocabulary was derived by hand for v0.2.0. A census of 309
 real Codex rollout transcripts (`~/.codex/sessions`) falsified three parts
@@ -57,6 +195,7 @@ and it is worth re-running against your own sessions after a Codex upgrade.
   `apply_patch` (126). Also recorded, because it is not guessable:
   `exec`'s `input` is a JavaScript program that calls other tools, not a
   shell line.
+
 
 ## v0.2.0 — 2026-08-05
 

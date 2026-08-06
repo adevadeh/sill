@@ -16,7 +16,11 @@ services:
       retries: 5
       start_period: 30s
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # SILL_BIND_ADDR defaults to 0.0.0.0 — every interface, as before. This
+      # database runs POSTGRES_HOST_AUTH_METHOD=trust, so anything that can
+      # reach the port is a superuser on the whole store; set it to 127.0.0.1
+      # in backend/.env unless another host genuinely needs to connect.
+      - "${SILL_BIND_ADDR:-0.0.0.0}:${POSTGRES_PORT:-5432}:5432"
     command:
       - postgres
       - -c
@@ -28,9 +32,12 @@ services:
       - private
 
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    # Defaults are the amd64 release line. On an arm64 host (Apple Silicon)
+    # that image runs under emulation — see backend/.env.example for the
+    # native alternative and the tradeoff it carries.
+    image: ${EMBEDDING_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.8}
     container_name: ${SILL_EMBEDDINGS_CONTAINER:-sill_embeddings}
-    platform: linux/amd64
+    platform: ${EMBEDDING_PLATFORM:-linux/amd64}
     command:
       - --model-id
       - ${EMBEDDING_MODEL_ID:-unsloth/embeddinggemma-300m}
@@ -63,8 +70,8 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-sill}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-sill_password}
     ports:
-      - "${RABBITMQ_PORT:-5672}:5672"
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+      - "${SILL_BIND_ADDR:-0.0.0.0}:${RABBITMQ_PORT:-5672}:5672"
+      - "${SILL_BIND_ADDR:-0.0.0.0}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:

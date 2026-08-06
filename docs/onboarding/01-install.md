@@ -89,7 +89,7 @@ claude mcp list
 ```
 
 Look for a `sill` entry reported as connected. If it isn't there, the entry
-didn't reach `~/.claude/.mcp.json` (or `~/.codex/config.toml`); re-run
+didn't reach `~/.claude.json` (or `~/.codex/config.toml`); re-run
 `./install.sh` and read step 7's output.
 
 Conformance is check 6 of `./verify.sh` above — the four-slot contract
