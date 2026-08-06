@@ -118,6 +118,26 @@ All notable changes to Sill are recorded here. Format loosely follows
   `backend/tests/test_recall_age_timezone.py`, including a
   characterization test that reproduces the old arithmetic at a fixed
   UTC-7 observer so the defect is demonstrated rather than asserted.
+### Fixed
+
+- **`verify.sh` check 6 never ran the conformance suite on a normal
+  install.** It probed `python3 -c "import pytest"` and ran `python3 -m
+  pytest` — but `install.sh` puts the backend in a pipx venv, or in
+  `~/.local/share/sill-venv`, never in the system `python3`. So the probe
+  failed on every ordinary install, check 6 always took its degraded
+  capture-slot branch, and the full four-slot suite went unrun during
+  verification while the check still printed `pass:`. Worse, the degraded
+  branch's remedy told the operator to set `SILL_PYTHON` and install into
+  it, and check 6 never read `SILL_PYTHON` — following the printed advice
+  exactly could not change the outcome. Check 6 now resolves the
+  interpreter the way `install.sh`'s `sill_python()` does, with an
+  explicit `SILL_PYTHON` winning; it names the interpreter it chose, and
+  the fallback advice names that same resolved path (offering `pipx
+  inject` when the install is pipx-based) instead of a shell incantation
+  that only reproduces the guess. Pinned by
+  `backend/tests/test_verify_conformance_interpreter.py`, including a
+  test that fails if verify.sh's resolution order drifts from
+  install.sh's.
 
 ## v0.2.0 — 2026-08-05
 

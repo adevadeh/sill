@@ -67,6 +67,31 @@ say() {
   printf '\n=== %s ===\n' "$*"
 }
 
+# Resolve the interpreter that has the backend (and its dev extras) installed.
+#
+# Check 6 used to test `python3` for pytest and run pytest with `python3` — but
+# `install.sh` puts the backend in a pipx venv, or in ~/.local/share/sill-venv,
+# never in the system python3. So on a normal install check 6 always found no
+# pytest and always took its degraded branch, while printing a remedy naming
+# SILL_PYTHON that it then never read. Following that remedy exactly could not
+# change the outcome.
+#
+# Resolution order mirrors install.sh's sill_python() — the same order the
+# backend was installed in — with an explicit SILL_PYTHON winning, since that
+# is what docs/onboarding/01-install.md and scheduling/README.md already tell
+# operators to set.
+sill_python() {
+  if [[ -n "${SILL_PYTHON:-}" ]]; then
+    printf '%s' "$SILL_PYTHON"
+    return
+  fi
+  local pipx_py="${PIPX_HOME:-$HOME/.local/pipx}/venvs/sill-memory/bin/python"
+  [[ -x "$pipx_py" ]] && { printf '%s' "$pipx_py"; return; }
+  local venv_py="$HOME/.local/share/sill-venv/bin/python"
+  [[ -x "$venv_py" ]] && { printf '%s' "$venv_py"; return; }
+  printf 'python3'
+}
+
 # Speak MCP to the installed server and require a real answer.
 #
 # Check 2 used to run `sill-mcp --help`, which exits before importing the MCP
@@ -273,8 +298,10 @@ say "Check 6/6: adapter conformance (inject/mint/capture/track, both harnesses)"
 # an end-user install — degrade to a direct, dependency-free check of the
 # capture slot (the one part cheap to prove with nothing but the stdlib)
 # rather than skipping the check silently.
-if python3 -c "import pytest" >/dev/null 2>&1; then
-  if (cd "$SILL_DIR/backend" && python3 -m pytest \
+SILL_PY="$(sill_python)"
+if "$SILL_PY" -c "import pytest" >/dev/null 2>&1; then
+  note "conformance interpreter: $SILL_PY"
+  if (cd "$SILL_DIR/backend" && "$SILL_PY" -m pytest \
         tests/test_adapter_conformance.py \
         "tests/test_notice.py::test_auto_store_argv_parses_for_both_harness_calling_shapes" \
         -q); then
@@ -283,10 +310,13 @@ if python3 -c "import pytest" >/dev/null 2>&1; then
     fail "adapter conformance suite failed — see pytest output above, and docs/adapters.md"
   fi
 else
-  note "pytest not importable by this python3 (dev-only extra) — running a direct capture-slot check instead."
-  note "For the full four-slot suite, install it into the interpreter that has the backend:"
-  note "  SILL_PYTHON=\"\$(ls \"\${PIPX_HOME:-\$HOME/.local/pipx}/venvs/sill-memory/bin/python\" 2>/dev/null || ls \"\$HOME/.local/share/sill-venv/bin/python\")\""
-  note "  \"\$SILL_PYTHON\" -m pip install -e backend[dev]"
+  note "pytest not importable by $SILL_PY (dev-only extra) — running a direct capture-slot check instead."
+  note "For the full four-slot suite, add pytest to that same interpreter — one of:"
+  if command -v pipx >/dev/null 2>&1 && [[ "$SILL_PY" == *"/pipx/venvs/sill-memory/"* ]]; then
+    note "  pipx inject sill-memory pytest pytest-asyncio"
+  fi
+  note "  \"$SILL_PY\" -m pip install -e \"$SILL_DIR/backend[dev]\""
+  note "Then re-run ./verify.sh. Override the interpreter with SILL_PYTHON=<path> if it guessed wrong."
   if python3 - "$SILL_DIR" <<'PY'
 import importlib.util
 import sys
