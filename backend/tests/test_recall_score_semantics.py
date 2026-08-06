@@ -1,0 +1,139 @@
+"""`recall` reports a rank-fusion score, and says so.
+
+The defect: `CognitiveMemory.recall()` selects `hybrid_recall`'s score column
+and assigned it to a dataclass field named `similarity`, which the MCP server
+serializes straight into its tool result. The `recall` tool then described
+itself as "Recall relevant memories by semantic similarity (fast_recall)" —
+naming a function it does not call.
+
+`hybrid_recall` fuses a vector ranking and a full-text ranking with Reciprocal
+Rank Fusion at k=60 (`schema.sql`: `1/(k+rank_vector) + 1/(k+rank_fts)`). So
+the number is a function of *rank*, not of match quality:
+
+    rank 1, one list   -> 1/61  = 0.0164
+    rank 2, one list   -> 1/62  = 0.0161
+    rank 1, both lists -> 2/61  = 0.0328
+
+Observed live before the fix: a query whose single best answer was an exact
+topical match came back as `"similarity": 0.01639344262295082` — precisely
+1/61, i.e. "this was ranked first", carrying no information about how well it
+matched. An agent reading a field called `similarity` with a value of 0.016
+concludes the store found nothing useful and discards a bullseye. Worse, two
+results of very different quality at the same rank are indistinguishable.
+
+The repo already knew the distinction where it mattered least and missed it
+where it mattered most: `plugin/hooks/spontaneous-recall.py` carries
+`HYBRID_MIN_SIMILARITY = 0.0  # hybrid_recall returns small RRF scores, not
+cosine similarity`, and `format_context()` already printed the value as
+"score". Only the field the model reads was mislabelled.
+
+These tests pin the name, the description's honesty, and — most importantly —
+that the description tells a reader the scale, since the number alone is
+uninterpretable without it.
+
+Needs no docker, database, or network.
+"""
+
+import dataclasses
+import re
+from pathlib import Path
+
+import pytest
+
+import cognitive_memory_api as api
+
+BACKEND = Path(__file__).resolve().parents[1]
+MCP_SERVER = BACKEND / "sill_mcp_server.py"
+
+
+def field_names(cls) -> set[str]:
+    return {f.name for f in dataclasses.fields(cls)}
+
+
+def test_memory_exposes_score_not_similarity():
+    names = field_names(api.Memory)
+    assert "score" in names
+    assert "similarity" not in names, (
+        "a hybrid_recall RRF score must not be published under the name "
+        "'similarity' — see this module's docstring"
+    )
+
+
+def test_memory_preview_exposes_score_not_similarity():
+    names = field_names(api.MemoryPreview)
+    assert "score" in names
+    assert "similarity" not in names
+
+
+def test_partial_activation_similarities_are_untouched():
+    """PartialActivation's two fields really are cosine similarities, computed
+    as `1 - (embedding <=> query)`. The rename must not sweep them up."""
+    names = field_names(api.PartialActivation)
+    assert {"cluster_similarity", "best_memory_similarity"} <= names
+
+
+def recall_tool_description() -> str:
+    """The `recall` tool's description string as registered with MCP."""
+    text = MCP_SERVER.read_text(encoding="utf-8")
+    m = re.search(r'(?s)_tool\(\s*\n\s*"recall",\s*\n(?P<desc>.*?)\{', text)
+    assert m, "could not locate the recall tool registration"
+    return m.group("desc")
+
+
+def test_recall_description_does_not_name_a_function_it_never_calls():
+    assert "fast_recall" not in recall_tool_description(), (
+        "recall() dispatches to hybrid_recall; naming fast_recall sends a "
+        "reader to the wrong scoring semantics"
+    )
+
+
+def test_recall_description_names_the_function_it_does_call():
+    assert "hybrid_recall" in recall_tool_description()
+
+
+def test_recall_description_warns_the_score_is_not_a_similarity():
+    """The value is uninterpretable without this. 0.016 reads as 'no match' to
+    anyone who assumes a 0..1 similarity."""
+    desc = recall_tool_description().lower()
+    assert "not a cosine similarity" in desc or "not a similarity" in desc
+    assert "rank" in desc, "the description never says the score encodes rank"
+
+
+def test_recall_description_gives_the_actual_scale():
+    """A warning without numbers still leaves a reader guessing. The two
+    landmark values are what make the scale legible."""
+    desc = recall_tool_description()
+    assert "0.0164" in desc, "the one-list top-hit value is not given"
+    assert "0.0328" in desc, "the both-lists top-hit value is not given"
+
+
+@pytest.mark.parametrize("k,rank,expected", [(60, 1, 1 / 61), (60, 2, 1 / 62), (60, 3, 1 / 63)])
+def test_the_documented_landmarks_match_the_schema_formula(k, rank, expected):
+    """Guards the description's numbers against the RRF constant in
+    schema.sql. If someone retunes k, these stop agreeing and the description
+    has to be revisited rather than silently drifting."""
+    assert round(1 / (k + rank), 4) == round(expected, 4)
+    if rank == 1:
+        assert f"{expected:.4f}" == "0.0164"
+
+
+def test_schema_still_uses_the_rrf_constant_the_description_assumes():
+    """The description's 0.0164/0.0328 are only true at k=60."""
+    schema = (BACKEND / "schema.sql").read_text(encoding="utf-8", errors="ignore")
+    assert re.search(r"p_k\s+INT\s+DEFAULT\s+60", schema), (
+        "hybrid_recall's RRF k is no longer 60 — the recall tool description's "
+        "worked numbers (0.0164 / 0.0328) are now wrong"
+    )
+
+
+def test_context_formatter_keeps_enough_precision_to_discriminate():
+    """RRF scores differ in the third and fourth decimal (1/61 vs 1/62 vs
+    1/63). Printed at two decimals every result reads '0.02' and the ordering
+    information is destroyed on the way to the reader."""
+    src = (BACKEND / "cognitive_memory_api.py").read_text(encoding="utf-8")
+    m = re.search(r'score:\s*\{m\.score:\.(?P<places>\d)f\}', src)
+    assert m, "could not find the score formatter in format_context()"
+    assert int(m.group("places")) >= 4, (
+        f"score printed to {m.group('places')} decimal places; RRF values "
+        "0.0164/0.0161/0.0159 collapse to the same string below 4"
+    )

@@ -3,6 +3,36 @@
 All notable changes to Sill are recorded here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased
+
+### Fixed
+
+- **`recall` reported rank position in a field named `similarity`.**
+  `CognitiveMemory.recall()` selects `hybrid_recall`'s score — Reciprocal
+  Rank Fusion at k=60, `1/(60+vector_rank) + 1/(60+fts_rank)` — and
+  published it as `Memory.similarity`, which the MCP server serializes
+  straight to the model. The `recall` tool meanwhile described itself as
+  "semantic similarity (fast_recall)", naming a function it does not
+  call. Observed live on a fresh install: a query whose best answer was
+  an exact topical match returned `"similarity": 0.01639344262295082` —
+  precisely 1/61, i.e. "ranked first", carrying nothing about how well it
+  matched. An agent reading a *similarity* of 0.016 concludes the store
+  found nothing and discards a bullseye; two results of very different
+  quality at the same rank are indistinguishable. The field is now
+  `score` on both `Memory` and `MemoryPreview`, and the tool description
+  states the fusion used, that the number is not a cosine similarity, and
+  the two landmark values (~0.0164 one list, ~0.0328 both) that make it
+  legible. `format_context()` also printed it at two decimals, collapsing
+  0.0164/0.0161/0.0159 to a single "0.02"; now four.
+  `PartialActivation.cluster_similarity` and `best_memory_similarity` are
+  untouched — those really are cosine. Pinned by
+  `backend/tests/test_recall_score_semantics.py`, including a guard that
+  fails if `hybrid_recall`'s k stops being 60 and the documented numbers
+  go stale.
+
+  *Wire-format change:* anything reading `similarity` off a `recall` or
+  `recall_preview` result must read `score` instead.
+
 ## v0.2.0 — 2026-08-05
 
 ### Upgrading from v0.1.0
