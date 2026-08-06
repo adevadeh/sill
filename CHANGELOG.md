@@ -5,6 +5,25 @@ All notable changes to Sill are recorded here. Format loosely follows
 
 ## Unreleased
 
+### Added
+
+- **The embeddings image and platform are operator-overridable**
+  (`EMBEDDING_IMAGE`, `EMBEDDING_PLATFORM`). Defaults are unchanged —
+  `cpu-1.8` on `linux/amd64`, byte-for-byte what v0.2.0 shipped — so an
+  operator who sets nothing sees no difference. Both were previously
+  hardcoded, which silently committed every arm64 host to running the
+  embeddings server under emulation for the life of the install; that is
+  the 903 s first boot the README already warns about, and it had no
+  remedy short of editing a tracked file. Upstream publishes a native
+  arm64 line, and `backend/.env` can now point at it. Documented in
+  `backend/.env.example` and under README → Prerequisites → "Apple
+  Silicon: the native image", including the two things that are easy to
+  get wrong: the arm64 line is built from main rather than tagged
+  releases (so it trades a pinned version for a rolling one), and it does
+  not buy Metal — containers on macOS have no GPU access, so the win is
+  the emulation tax alone. Pinned by
+  `backend/tests/test_embeddings_image_override.py`.
+
 ### Fixed
 
 - **`install.sh` step 7 could corrupt `~/.codex/config.toml`.** When the

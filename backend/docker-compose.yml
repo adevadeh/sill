@@ -28,9 +28,12 @@ services:
       - private
 
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.8
+    # Defaults are the amd64 release line. On an arm64 host (Apple Silicon)
+    # that image runs under emulation — see backend/.env.example for the
+    # native alternative and the tradeoff it carries.
+    image: ${EMBEDDING_IMAGE:-ghcr.io/huggingface/text-embeddings-inference:cpu-1.8}
     container_name: ${SILL_EMBEDDINGS_CONTAINER:-sill_embeddings}
-    platform: linux/amd64
+    platform: ${EMBEDDING_PLATFORM:-linux/amd64}
     command:
       - --model-id
       - ${EMBEDDING_MODEL_ID:-unsloth/embeddinggemma-300m}
