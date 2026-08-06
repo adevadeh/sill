@@ -98,6 +98,26 @@ All notable changes to Sill are recorded here. Format loosely follows
 
   *Wire-format change:* anything reading `similarity` off a `recall` or
   `recall_preview` result must read `score` instead.
+### Fixed
+
+- **A memory stored seconds ago was labelled `-1d ago`.**
+  `spontaneous-recall.py` split the UTC offset off Postgres's timestamp
+  (`.split('+')[0]`), leaving a naive datetime that still held the *UTC*
+  wall clock, then subtracted it from a naive *local* `datetime.now()`.
+  Anywhere west of UTC that goes negative for anything recent — 18:25Z
+  minus 11:25 PDT is -7h, whose `.days` is `-1` — so the age fell through
+  the `days < 30` branch and printed `-1d ago`. Users east of UTC saw
+  ages silently inflated instead. This is the recall header the model
+  reads on *every prompt*, so it was wrong data injected into context.
+  Ages are now computed as instants in UTC and clamped at zero, so clock
+  skew cannot reintroduce a negative by another route. Timestamp parsing
+  moved into `parse_db_timestamp()`, which normalizes Postgres's
+  two-digit offset (`+00`) itself rather than relying on
+  `datetime.fromisoformat`, which did not accept it until 3.11 — below
+  this project's 3.10 floor. Pinned by
+  `backend/tests/test_recall_age_timezone.py`, including a
+  characterization test that reproduces the old arithmetic at a fixed
+  UTC-7 observer so the defect is demonstrated rather than asserted.
 
 ## v0.2.0 — 2026-08-05
 
